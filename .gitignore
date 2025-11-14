@@ -1,0 +1,9 @@
+build
+__pycache__
+*venv
+*env
+.devcontainer
+*.egg-info
+testing.py
+/build/
+/src/dipcoin_client_sui.egg-info/
