@@ -18,15 +18,7 @@ async def main():
     client = DipcoinClient(True, Networks[TEST_NETWORK], TEST_ACCT_KEY)
     await client.init(True)
 
-    # todo 下面的都是测试
-    # cancel placed order
-    # cancellation_request = client.create_signed_cancel_orders(
-    #     MARKET_SYMBOLS.ETH, order_hash=["95c32aea0bc52c708fb238ab45dd1a21484d0fa598d2ea957d879e3f0e3ed969"]
-    # )
-    # # print("cancellation_request",cancellation_request)
-    # cancel_resp = await client.post_cancel_order(cancellation_request)
-    # print("cancel_resp", cancel_resp)
-    # time.sleep(200)
+
 
     leverage = 10
     order = OrderSignatureRequest(
