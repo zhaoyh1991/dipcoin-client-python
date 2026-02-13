@@ -7,3 +7,5 @@ __pycache__
 testing.py
 /build/
 /src/dipcoin_client_sui.egg-info/
+/logs/
+/examples/config.py

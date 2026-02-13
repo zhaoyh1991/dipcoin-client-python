@@ -144,7 +144,7 @@ class CancelOrderResponse(TypedDict):
 class GetTransactionHistoryRequest(TypedDict):
     symbol: MARKET_SYMBOLS  # will fetch orders of provided market
     pageSize: int  # will get only provided number of orders must be <= 50
-    pageNumber: int  # will fetch particular page records. A single page contains 50 records.
+    pageNum: int  # will fetch particular page records. A single page contains 50 records.
 
 
 class GetPositionRequest(GetTransactionHistoryRequest):
@@ -153,12 +153,10 @@ class GetPositionRequest(GetTransactionHistoryRequest):
 
 class GetUserTradesRequest(TypedDict):
     symbol: MARKET_SYMBOLS
-    maker: bool
-    startTime: int
+    beginTime: int
     endTime: int
     pageSize: int
-    pageNumber: int
-    type: ORDER_TYPE
+    pageNum: int
     parentAddress: str  # (optional) should be provided by sub account
 
 
@@ -172,7 +170,6 @@ class GetUserTradesHistoryRequest(TypedDict):
 
 
 class GetOrderRequest(GetTransactionHistoryRequest):
-    orderId: int  # (optional) the id of order to be fetched
     parentAddress: str  # (optional) should be provided by sub accounts
 
 
@@ -182,26 +179,7 @@ class GetFundingHistoryRequest(TypedDict):
     pageNum: int  # will fetch particular page records. A single page contains 50 records.
 
 
-class FundingHistoryResponse(TypedDict):
-    id: int  # unique id
-    symbol: MARKET_SYMBOLS  # market for which to create order
-    userAddress: str  # user public address
-    quantity: int  # size of position
-    time: int  # created time
-    appliedFundingRate: str  # funding rate percent applied
-    isFundingRatePositive: bool  # was funding rate +ve or -ve
-    payment: str  # amount
-    isPaymentPositive: bool  # whether payment was deducted or added
-    oraclePrice: str  # price from oracle
-    side: ORDER_SIDE  # BUY/SELL
-    blockNumber: int  # transaction block number
-    isPositionPositive: bool  # is position LONG or SHORT
 
-
-class GetFundingHistoryResponse(TypedDict):
-    isMoreDataAvailable: bool  # boolean indicating if there is more data available
-    nextCursor: int  # next page number
-    data: List[FundingHistoryResponse]
 
 
 class GetTransferHistoryRequest(TypedDict):

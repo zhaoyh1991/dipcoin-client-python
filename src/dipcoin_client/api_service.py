@@ -1,3 +1,5 @@
+import os
+
 import aiohttp
 from .interfaces import *
 
@@ -7,7 +9,16 @@ class APIService:
         self.server_url = url
         self.auth_token = None
         self.api_token = None
-        self.client = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False))
+        # config proxy for example：
+        #   export HTTP_PROXY="http://127.0.0.1:1087"
+        #   export HTTPS_PROXY="http://127.0.0.1:1087"
+        self.proxy = os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY") or None
+
+        # trust_env=True  aiohttp will auto proxy
+        self.client = aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(ssl=False),
+            trust_env=True,
+        )
 
     async def close_session(self):
         if self.client is not None:
@@ -23,7 +34,7 @@ class APIService:
         """
 
         url = self._create_url(service_url)
-        print("url", url)
+        # print("url", url)
 
         response = None
         if auth_required:
@@ -35,10 +46,13 @@ class APIService:
             response = await self.client.get(
                 url,
                 params=query,
-                headers=headers
+                headers=headers,
+                proxy=self.proxy,
             )
         else:
-            response = await self.client.get(url, params=query)
+            response = await self.client.get(url, params=query, proxy=self.proxy)
+
+            # print("response",response)
 
         try:
             if response.status != 503:  # checking for service unavailitbility
@@ -60,7 +74,6 @@ class APIService:
         # print("url", url, data)
         response = None
 
-
         headers = {
             'Content-Type': 'application/json'
         }
@@ -76,7 +89,12 @@ class APIService:
         import json
         json_data = json.dumps(data)
 
-        response = await self.client.post(url=url, data=json_data, headers=headers)
+        response = await self.client.post(
+            url=url,
+            data=json_data,
+            headers=headers,
+            proxy=self.proxy,
+        )
 
         try:
             if response.status != 503:  # checking for service unavailitbility
@@ -106,9 +124,11 @@ class APIService:
             response = await self.client.delete(
                 url=url,
                 data=data,
-                headers=headers)
+                headers=headers,
+                proxy=self.proxy,
+            )
         else:
-            response = await self.client.delete(url=url, data=data)
+            response = await self.client.delete(url=url, data=data, proxy=self.proxy)
 
         try:
             return await response.json()

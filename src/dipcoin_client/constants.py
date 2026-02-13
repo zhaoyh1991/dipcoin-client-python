@@ -42,7 +42,6 @@ SERVICE_URLS = {
         "ACCOUNT": "/api/perp-trade-api/curr-info/account",
         "AUTHORIZE": "/api/authorize",
         "FUNDING_HISTORY": "/api/perp-trade-api/history/funding-settlements",
-        "USER_TRADES_HISTORY": "/api/perp-trade-api/history/orders",
     },
     "ORDERS": {
         "ORDERS": "/api/perp-trade-api/trade/placeorder",

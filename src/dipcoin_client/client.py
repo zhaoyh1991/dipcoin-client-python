@@ -694,17 +694,7 @@ class DipcoinClient:
 
         return await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"], {})
 
-    async def get_funding_rate(self, symbol: MARKET_SYMBOLS):
-        """
-        Returns a dictionary containing the current funding rate on market.
-        Inputs:
-            symbol(MARKET_SYMBOLS): symbol of market
-        Returns:
-            dict: Funding rate into
-        """
-        return await self.apis.get(
-            SERVICE_URLS["MARKET"]["FUNDING_RATE"], {"symbol": symbol.value}
-        )
+
 
     async def get_funding_history(self, params: GetFundingHistoryRequest):
         """
@@ -712,11 +702,7 @@ class DipcoinClient:
             and the next page number
         Inputs:
             params(GetFundingHistoryRequest): params required to fetch funding history
-        Returns:
-            GetFundingHistoryResponse:
-                isMoreDataAvailable: boolean indicating if there is/are more page(s)
-                nextCursor: the next page number
-                data: a list of the user's funding payments
+
         """
 
         params = extract_enums(params, ["symbol"])
@@ -783,6 +769,7 @@ class DipcoinClient:
         """
         params = extract_enums(params, ["symbol"])
         print("get_orders", params)
+        return await self.apis.get(SERVICE_URLS["USER"]["ORDERS"], params, True, wallet=self.account.address, )
 
     async def get_user_position(self, params: GetPositionRequest):
         """
@@ -807,21 +794,7 @@ class DipcoinClient:
         params = extract_enums(params, ["symbol", "type"])
         return await self.apis.get(SERVICE_URLS["USER"]["USER_TRADES"], params, True, wallet=self.account.address,)
 
-    async def get_user_trades_history(self, params: GetUserTradesHistoryRequest):
-        """
-        Returns a list of the user trades history records, a boolean indicating if there is/are more page(s), and the next page number.
-        Inputs:
-            params(GetUserTradesHistoryRequest): params to query trades (e.g. symbol)
-        Returns:
-            GetUserTradesHistoryResponse:
-                isMoreDataAvailable: boolean indicating if there is/are more page(s)
-                nextCursor: the next page number
-                data: a list of the user trades history record
-        """
-        params = extract_enums(params, ["symbol", "type"])
-        return await self.apis.get(
-            SERVICE_URLS["USER"]["USER_TRADES_HISTORY"], params, True
-        )
+
 
     async def get_user_account_data(self, parentAddress: str = ""):
         """
