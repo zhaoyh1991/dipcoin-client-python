@@ -15,20 +15,31 @@ import time
 DEAULT_EXCHANGE_LEVERAGE = 3
 
 
+def _looks_like_bip39_mnemonic(s: str) -> bool:
+    words = s.split()
+    if len(words) not in (12, 15, 18, 21, 24):
+        return False
+    return all(w.isalpha() for w in words)
+
+
 class DipcoinClient:
     """
     A class to represent a client for interacting with  offchain and onchain APIs.
     """
 
-    def __init__(self, are_terms_accepted, network, private_key=""):
+    def __init__(self, are_terms_accepted, network, private_key="", parentAddress=""):
         self.are_terms_accepted = are_terms_accepted
         self.network = network
-        if private_key != "":
-            if private_key.startswith("0x"):
-                private_key = private_key[2:]
-                self.account = SuiWallet(privateKey=private_key)
+        if private_key:
+            pk = private_key.strip()
+            if _looks_like_bip39_mnemonic(pk):
+                self.account = SuiWallet(seed=pk)
             else:
-                self.account = SuiWallet(seed=private_key)
+                self.account = SuiWallet(privateKey=pk)
+        else:
+            self.account = None
+        if self.account is not None:
+            print("account", self.account.address)
         self.apis = APIService(
             self.network["apiGateway"]
         )
@@ -39,6 +50,14 @@ class DipcoinClient:
         self.onboarding_signer = OnboardingSigner()
         self.contract_signer = Signer()
         self.url = self.network["url"]
+        self.parentAddress = self.account.address.lower()
+        if parentAddress != "":
+            self.parentAddress = parentAddress
+
+    def _ensure_parent_address_in_params(self, params: dict) -> None:
+        """TypedDict request objects are plain dicts; optional parentAddress may be omitted."""
+        if params.get("parentAddress", "") == "":
+            params["parentAddress"] = self.parentAddress
 
     async def init(self, user_onboarding=True, api_token="", auth_token=""):
         """
@@ -91,6 +110,8 @@ class DipcoinClient:
                     f"Authorization error: {response['error']['message']}"
                 )
 
+            # print("response", response)
+
             user_auth_token = response["data"]["token"]
 
         return user_auth_token
@@ -141,7 +162,7 @@ class DipcoinClient:
             ),
             creator=params["maker"].lower()
             if "maker" in params
-            else self.account.address.lower(),
+            else self.parentAddress,
             isLong=params["side"] == ORDER_SIDE.BUY,
             reduceOnly=default_value(params, "reduceOnly", False),
             postOnly=default_value(params, "postOnly", False),
@@ -172,7 +193,7 @@ class DipcoinClient:
         sui_params["leverage"] = to_base18(req["leverage"])
 
         order = self.create_order_to_sign(sui_params)
-        print("create_order_to_sign", order)
+        # print("create_order_to_sign", order)
 
         symbol = sui_params["symbol"].value
         order_signature = self.order_signer.sign_order(
@@ -251,6 +272,8 @@ class DipcoinClient:
                     cancel_hash, self.account.privateKeyBytes, "")
                 + self.account.publicKeyBase64.decode()
         )
+        if parentAddress == "":
+            parentAddress = self.parentAddress
         print("hash_sig", hash_sig)
         print("address", self.account.address)
 
@@ -302,6 +325,8 @@ class DipcoinClient:
             {"symbol": symbol}
         )
         print("cancel_all_orders", orders)
+        if parentAddress == "":
+            parentAddress = self.parentAddress
 
         hashes = []
         for i in orders["data"]["data"]:
@@ -694,8 +719,6 @@ class DipcoinClient:
 
         return await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"], {})
 
-
-
     async def get_funding_history(self, params: GetFundingHistoryRequest):
         """
         Returns a list of the user's funding payments, a boolean indicating if there is/are more page(s),
@@ -704,7 +727,7 @@ class DipcoinClient:
             params(GetFundingHistoryRequest): params required to fetch funding history
 
         """
-
+        self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol"])
 
         return await self.apis.get(
@@ -746,7 +769,6 @@ class DipcoinClient:
 
         return await self.apis.get(SERVICE_URLS["MARKET"]["CANDLE_STICK_DATA"], params)
 
-
     def get_account(self):
         """
         Returns the user account object
@@ -767,8 +789,9 @@ class DipcoinClient:
         Returns:
             list: a list of orders
         """
+        self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol"])
-        print("get_orders", params)
+        # print("get_orders", params)
         return await self.apis.get(SERVICE_URLS["USER"]["ORDERS"], params, True, wallet=self.account.address, )
 
     async def get_user_position(self, params: GetPositionRequest):
@@ -778,6 +801,7 @@ class DipcoinClient:
         Returns:
             list: a list of positions
         """
+        self._ensure_parent_address_in_params(params)
         if params is not None:
             params = extract_enums(params, ["symbol"])
 
@@ -791,10 +815,9 @@ class DipcoinClient:
         Returns:
             list: a list of trade
         """
+        self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol", "type"])
-        return await self.apis.get(SERVICE_URLS["USER"]["USER_TRADES"], params, True, wallet=self.account.address,)
-
-
+        return await self.apis.get(SERVICE_URLS["USER"]["USER_TRADES"], params, True, wallet=self.account.address, )
 
     async def get_user_account_data(self, parentAddress: str = ""):
         """
@@ -802,6 +825,9 @@ class DipcoinClient:
         Inputs:
             parentAddress: an optional field, used by sub accounts to fetch parent account state
         """
+        if parentAddress == "":
+            parentAddress = self.parentAddress
+
         return await self.apis.get(
             service_url=SERVICE_URLS["USER"]["ACCOUNT"],
             query={"parentAddress": parentAddress},

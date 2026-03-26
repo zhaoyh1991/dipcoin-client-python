@@ -41,7 +41,7 @@ class OrderSigner(Signer):
         """
         flags = self.get_order_flags(order)
         
-        # 严格按照 Java 代码格式实现
+        # Matches the Java reference implementation formatting.
         sb = []
         sb.append("{\n")
         sb.append("\"market\":\"" + str(order.get("market", "")) + "\",\n")
@@ -82,30 +82,27 @@ class OrderSigner(Signer):
         buffer = self.get_serialized_order(order)
         # print("Serialized order:", buffer)
         
-        # 将字符串转换为 UTF-8 字节数组
+        # UTF-8 encode the payload.
         msg_bytearray = bytearray(buffer.encode("utf-8"))
         # print("Message length:", len(msg_bytearray))
         
-        # 创建 intent 字节数组
+        # Build intent bytes (personal message scope).
         intent = bytearray()
         
-        # 添加 [3, 0, 0] 前缀
+        # Prefix [3, 0, 0] for intent scope.
         intent.extend([3, 0, 0])
         
-        # 使用与 Java 相同的 BCS 编码方式
+        # BCS-style length, same as Java.
         from sui_utils import decimal_to_bcs
         length_bcs = decimal_to_bcs(len(msg_bytearray))
         # print("BCS length bytes:", length_bcs)
         
-        # 添加 BCS 编码的长度
         intent.extend(length_bcs)
         
-        # 添加消息内容
         intent.extend(msg_bytearray)
         
         # print("Intent bytes:", intent.hex())
         
-        # 计算 Blake2b 哈希
         msg_hash = hashlib.blake2b(intent, digest_size=32)
         # print("Message hash:", msg_hash.digest().hex())
 

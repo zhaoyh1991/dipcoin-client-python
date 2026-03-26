@@ -18,6 +18,7 @@ class MARKET_SYMBOLS(Enum):
     SUI = "SUI-PERP"
     XRP = "XRP-PERP"
     BNB = "BNB-PERP"
+    PAXG = "PAXG-PERP"
 
     
 class TIME_IN_FORCE(Enum):

@@ -29,7 +29,7 @@ STAGING_CONTRACTS = {
 PROD_CONTRACTS = {
     "sub_account_id": "0x3ad8c911dff3ee0aeeaf86f0c7e7a540a23743477e831d14f62b63e58fb8eb0d",  
     "bank_table_id": "0x9c78b1bb63de6ceece5be85a7dd6af77bf57a7a989bb51f27e4a2fbabf0ca2db",
-    "package_id": "0x978fed071cca22dd26bec3cf4a5d5a00ab10f39cb8c659bbfdfbec4397241001",
+    "package_id": "0x3d11bc46bb4fbcdef7d17f69ac10e3a471d8f09cf104f94b5113dc2cd1c44fd2",
     "bank_id": "0x3cc2bfbe6b9dc346f3f27a47b4b0c9eaaf0143c0c704726a1513a1e8c5d9a4c1",
     "config_id": "0xdeff2ed27dfe5402e38d60b090a7dcf9b4842c16ec63e472119272173603dfd8",
     "currency_type": "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",

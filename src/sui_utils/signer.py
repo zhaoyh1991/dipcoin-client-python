@@ -51,11 +51,13 @@ class Signer:
         intent = intent + tx_bytes
         hash = hashlib.blake2b(intent, digest_size=32).digest()
 
-        result = nacl.signing.SigningKey(sui_wallet.privateKeyBytes).sign(hash)[:64]
+        result = nacl.signing.SigningKey(
+            preferred_sui_wallet.privateKeyBytes
+        ).sign(hash)[:64]
         temp = bytearray()
         temp.append(0)
         temp.extend(result)
-        temp.extend(sui_wallet.publicKeyBytes)
+        temp.extend(preferred_sui_wallet.publicKeyBytes)
         res = base64.b64encode(temp)
         return res.decode()
     
@@ -160,13 +162,17 @@ class Signer:
         blake2bHash = hashlib.blake2b(intent, digest_size=32).digest()
 
         # Sign the hash
-        signature = nacl.signing.SigningKey(wallet.privateKeyBytes).sign(blake2bHash)[:64]
+        signature = nacl.signing.SigningKey(
+            preferred_wallet.privateKeyBytes
+        ).sign(blake2bHash)[:64]
 
         serializer = BCSSerializer()
-        serializer.serialize_u8(WALLET_SCHEME[wallet.getKeyScheme()])
-        
+        if preferred_wallet.getKeyScheme() != WALLET_SCHEME.ED25519:
+            raise ValueError("Only ED25519 wallet scheme is supported")
+        serializer.serialize_u8(0)
+
         # Construct Signature in accurate format (scheme + signature + publicKey)
-        return serializer.get_bytes() + signature + wallet.publicKeyBytes
+        return serializer.get_bytes() + signature + preferred_wallet.publicKeyBytes
     
     def sign_bytes(self, bytes: bytearray, private_key: bytes = None) -> bytes:
         """

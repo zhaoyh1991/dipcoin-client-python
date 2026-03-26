@@ -42,7 +42,6 @@ class OrderSignatureRequest(RequiredOrderFields):
     maker: str  # (optional) maker of the order, if not provided the account used to initialize the client will be default maker
     # isBuy: bool
     # postOnly: bool
-    # deprecated
     ioc: bool
 
 
@@ -175,6 +174,7 @@ class GetOrderRequest(GetTransactionHistoryRequest):
 
 class GetFundingHistoryRequest(TypedDict):
     symbol: MARKET_SYMBOLS  # will fetch orders of provided market
+    parentAddress: str
     pageSize: int  # will get only provided number of orders must be <= 50
     pageNum: int  # will fetch particular page records. A single page contains 50 records.
 

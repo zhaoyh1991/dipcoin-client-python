@@ -9,3 +9,4 @@ testing.py
 /src/dipcoin_client_sui.egg-info/
 /logs/
 /examples/config.py
+/examples/state/

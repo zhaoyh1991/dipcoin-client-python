@@ -61,11 +61,11 @@ To enable proper code navigation and autocomplete in PyCharm:
 Edit `examples/config.py` to set your test credentials:
 
 ```python
-TEST_ACCT_KEY = "your_mnemonic_phrase"  # Keep this secure!
-TEST_NETWORK = "SUI_STAGING"  # or "SUI_MAINNET"
+TEST_ACCT_KEY = "your_mnemonic_phrase"  # or hex private key, suiprivkey bech32, etc.
+TEST_NETWORK = "SUI_STAGING"  # mainnet: use "SUI_PROD"
 ```
 
-**⚠️ Security Warning**: The `TEST_ACCT_KEY` in `examples/config.py` contains your seed phrase . Keep it secure and never commit it to version control.
+**⚠️ Security Warning**: The `TEST_ACCT_KEY` in `examples/config.py` is a secret (mnemonic or private key). Keep it secure and never commit it to version control.
 
 ### Run Examples
 
@@ -77,11 +77,11 @@ python 1.initialization.py
 ### Basic Usage
 
 ```python
-from dipcoin_client import BluefinClient, Networks
+from dipcoin_client import DipcoinClient, Networks
 import asyncio
 
 async def main():
-    client = BluefinClient(
+    client = DipcoinClient(
         True,  # Agree to terms and conditions
         Networks["SUI_STAGING"],
         "your_mnemonic_phrase"
@@ -92,6 +92,46 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
+
+### Wallet credentials (mnemonic or private key)
+
+`DipcoinClient` accepts either:
+
+- **BIP39 mnemonic** — space-separated phrase (typically 12 or 24 words). The client detects a mnemonic heuristically (word count and alphabetic words).
+- **Sui private key export** — any of:
+  - 64 hex characters (optional `0x` prefix)
+  - Standard or URL-safe **base64** (32 bytes, or 33 bytes with a leading `0x00` byte)
+  - **`suiprivkey1...`** Bech32 string (SIP-15), as exported by Sui tooling
+
+The derived address and signing path match Sui’s Ed25519 wallet behavior (including correct address derivation from `scheme || public key`).
+
+### Sub-accounts and `parentAddress`
+
+Some setups use a **sub-account** key that only has trading/API permissions, while the **main wallet** remains the parent on-chain identity.
+
+- When you authenticate with the **sub-account** key, pass the **main wallet address** as `parentAddress` in `DipcoinClient(...)`.
+- When you use the **main wallet** mnemonic or private key directly, you normally **do not** need `parentAddress`; the client defaults it from your own address.
+
+Example (sub-account key + main wallet as parent), see `examples/test_sui_taker_pingpong.py`:
+
+```python
+client = DipcoinClient(
+    True,
+    Networks["SUI_STAGING"],  # use Networks["SUI_PROD"] on mainnet
+    TEST_ACCT_KEY,  # sub-account / API trading key
+    parentAddress="0x...main_wallet_address...",
+)
+```
+
+For **mainnet**, pass `Networks["SUI_PROD"]` as the second argument instead of `SUI_STAGING` (see `src/dipcoin_client/constants.py`).
+
+### API numeric scaling (10¹⁸)
+
+**REST API responses expose many numeric quantities scaled by 10¹⁸** (fixed-point / “wei-style”). Before displaying or mixing with human-readable amounts, **convert** them (e.g. divide by `10**18`, or use helpers such as `from_wei` / project utilities in `sui_utils.utilities` where applicable). Treat all such fields consistently to avoid order-size or balance mistakes.
+
+### Getting productive quickly
+
+If you run into integration issues, **LLM / AI coding assistants** work well with this repo: point the tool at **`examples/`** and this README so it can map patterns (initialization, signing, orders, `parentAddress`) to your use case.
 
 ## Project Structure
 
