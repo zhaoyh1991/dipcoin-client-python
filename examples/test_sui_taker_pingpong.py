@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -15,6 +16,8 @@ from dipcoin_client import (
     ORDER_TYPE,
     OrderSignatureRequest,
     from1e18,
+    normalize_price,
+    normalize_qty,
 )
 
 os.makedirs("logs", exist_ok=True)
@@ -163,6 +166,7 @@ async def loop_pingpong(client: DipcoinClient, cfg: PingPongConfig) -> None:
             # query account
             account_data = await client.get_user_account_data()
             open_orders = await client.get_orders({})
+            ### 
 
             logger.info(
                 "OB best_bid={} best_ask={} | position side={} qty={}| account_data={},open_orders={}",
@@ -173,6 +177,15 @@ async def loop_pingpong(client: DipcoinClient, cfg: PingPongConfig) -> None:
                 account_data,
                 open_orders
             )
+            ##add tpsl plan
+            #sui price precision is 4
+            #sui qty precision is 0
+            #resp = await client.set_take_profit_plan(cfg.symbol, ORDER_SIDE.SELL, normalize_price(best_bid*1.1,4), normalize_price(best_bid*1.1,4), normalize_qty(pos_qty,0), cfg.leverage)
+            #logger.info("SET TP PLAN resp={}", resp)
+            #resp = await client.set_stop_loss_plan(cfg.symbol, ORDER_SIDE.SELL, normalize_price(best_ask*0.9,4), normalize_price(best_ask*0.9,4), normalize_qty(pos_qty,0)    , cfg.leverage)
+            #logger.info("SET SL PLAN resp={}", resp)
+            #time.sleep(90)
+           
 
             if pos_side is not None and pos_qty > 0:
                 # 有仓位：市价平仓（taker）

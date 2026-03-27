@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from typing import Any, Mapping, Optional, Union
 
 from .api_service import APIService
 from .contracts import Contracts
@@ -213,6 +214,171 @@ class DipcoinClient:
             orderType=sui_params["orderType"],
             creator=order["creator"],
 
+        )
+
+    @staticmethod
+    def _mapping_get(m: Any, key: str) -> Any:
+        if isinstance(m, Mapping):
+            return m[key]
+        return getattr(m, key)
+
+    def create_signed_reduce_only_plan_order(
+        self,
+        symbol: MARKET_SYMBOLS,
+        side: ORDER_SIDE,
+        order_type: ORDER_TYPE,
+        order_price: Union[int, float],
+        quantity: Union[int, float],
+        leverage: Union[int, float],
+        maker: str = "",
+    ) -> OrderSignatureResponse:
+        """
+        Reduce-only order signature for TP/SL plan close. Matches server
+        OrderData (expiration=0, ioc/postOnly false, orderbookOnly true).
+        Sign payload uses order_price/quantity/leverage only — not trigger_price.
+        """
+        req: OrderSignatureRequest = {
+            "symbol": symbol,
+            "side": side,
+            "orderType": order_type,
+            "price": order_price,
+            "quantity": quantity,
+            "leverage": leverage,
+            "reduceOnly": True,
+            "salt": int(time.time() * 1000),
+            "expiration": 0,
+            "ioc": False,
+            "postOnly": False,
+            "orderbookOnly": True,
+        }
+        if maker:
+            req["maker"] = maker
+        return self.create_signed_order(req)
+
+    async def set_take_profit_plan(
+        self,
+        symbol: MARKET_SYMBOLS,
+        close_side: ORDER_SIDE,
+        trigger_price: Union[int, float],
+        order_price: Union[int, float],
+        quantity: Union[int, float],
+        leverage: Union[int, float],
+        order_type: ORDER_TYPE = ORDER_TYPE.LIMIT,
+        tpsl_type: str = "normal",
+        trigger_way: str = "oracle",
+        creator: str = "",
+    ):
+        """
+        仅新增单笔止盈计划（不在同一请求中设置止损或修改已有计划）。
+        trigger_price：条件触发价；order_price：签名与执行的委托价（市价计划须为 0）。
+        close_side：平多 SELL、平空 BUY。creator：主账户地址，默认 self.parentAddress。
+    
+        """
+        if tpsl_type not in ("normal", "position"):
+            raise ValueError("tpsl_type must be 'normal' or 'position'")
+        if order_type == ORDER_TYPE.MARKET and order_price != 0:
+            raise ValueError("order_price must be 0 for MARKET plan")
+        cr = creator.lower() if creator else self.parentAddress
+        signed = self.create_signed_reduce_only_plan_order(
+            symbol,
+            close_side,
+            order_type,
+            order_price,
+            quantity,
+            leverage,
+            maker=cr,
+        )
+        return await self.apis.post(
+            SERVICE_URLS["PLAN"]["BATCH_PLAN_CLOSE"],
+            {
+                "symbol": symbol.value,
+                "side": close_side.value,
+                "leverage": self._mapping_get(signed, "leverage"),
+                "creator": cr,
+                "tpOrderType": order_type.value,
+                "tpTpslType": tpsl_type,
+                "tpTriggerPrice": to_base18(trigger_price),
+                "tpOrderPrice": self._mapping_get(signed, "price"),
+                "tpQuantity": self._mapping_get(signed, "quantity"),
+                "tpTriggerWay": trigger_way,
+                "tpSalt": str(self._mapping_get(signed, "salt")),
+                "tpOrderSignature": self._mapping_get(signed, "orderSignature"),
+            },
+            auth_required=True,
+            wallet=self.account.address,
+        )
+
+    async def set_stop_loss_plan(
+        self,
+        symbol: MARKET_SYMBOLS,
+        close_side: ORDER_SIDE,
+        trigger_price: Union[int, float],
+        order_price: Union[int, float],
+        quantity: Union[int, float],
+        leverage: Union[int, float],
+        order_type: ORDER_TYPE = ORDER_TYPE.LIMIT,
+        tpsl_type: str = "normal",
+        trigger_way: str = "oracle",
+        creator: str = "",
+    ):
+        """
+        仅新增单笔止损计划（不在同一请求中设置止盈或修改已有计划）。
+        参数含义同 set_take_profit_plan。
+        """
+        if tpsl_type not in ("normal", "position"):
+            raise ValueError("tpsl_type must be 'normal' or 'position'")
+        if order_type == ORDER_TYPE.MARKET and order_price != 0:
+            raise ValueError("order_price must be 0 for MARKET plan")
+        cr = creator.lower() if creator else self.parentAddress
+        signed = self.create_signed_reduce_only_plan_order(
+            symbol,
+            close_side,
+            order_type,
+            order_price,
+            quantity,
+            leverage,
+            maker=cr,
+        )
+        return await self.apis.post(
+            SERVICE_URLS["PLAN"]["BATCH_PLAN_CLOSE"],
+            {
+                "symbol": symbol.value,
+                "side": close_side.value,
+                "leverage": self._mapping_get(signed, "leverage"),
+                "creator": cr,
+                "slOrderType": order_type.value,
+                "slTpslType": tpsl_type,
+                "slTriggerPrice": to_base18(trigger_price),
+                "slOrderPrice": self._mapping_get(signed, "price"),
+                "slQuantity": self._mapping_get(signed, "quantity"),
+                "slTriggerWay": trigger_way,
+                "slSalt": str(self._mapping_get(signed, "salt")),
+                "slOrderSignature": self._mapping_get(signed, "orderSignature"),
+            },
+            auth_required=True,
+            wallet=self.account.address,
+        )
+
+    async def get_position_tpsl_plans(
+        self,
+        position_id: int,
+        tpsl_type: str="normal",
+        parent_address: str = "",
+    ):
+        """
+        查询仓位关联的止盈止损计划。 tpsl_type: 'normal' 或 'position'。
+        子账户查询母账户维度时可传 parent_address。
+        """
+        if tpsl_type not in ("normal", "position"):
+            raise ValueError("tpsl_type must be 'normal' or 'position'")
+        q: dict = {"positionId": position_id, "tpslType": tpsl_type}
+        if parent_address:
+            q["parentAddress"] = parent_address.lower()
+        return await self.apis.get(
+            SERVICE_URLS["PLAN"]["POSITION_TPSL"],
+            query=q,
+            auth_required=True,
+            wallet=self.account.address,
         )
 
     def create_signed_cancel_order(

@@ -129,6 +129,26 @@ For **mainnet**, pass `Networks["SUI_PROD"]` as the second argument instead of `
 
 **REST API responses expose many numeric quantities scaled by 10¹⁸** (fixed-point / “wei-style”). Before displaying or mixing with human-readable amounts, **convert** them (e.g. divide by `10**18`, or use helpers such as `from_wei` / project utilities in `sui_utils.utilities` where applicable). Treat all such fields consistently to avoid order-size or balance mistakes.
 
+### Update: take profit & stop loss (plan orders)
+
+The client supports **position-linked TP/SL plan orders** (single side per request: either TP or SL, not both; additive flow rather than editing existing plans in one call):
+
+- `DipcoinClient.set_take_profit_plan(...)` — submit a take-profit plan close order (signed like a normal reduce-only order via `create_signed_order`).
+- `DipcoinClient.set_stop_loss_plan(...)` — same for stop-loss.
+- `DipcoinClient.get_position_tpsl_plans(position_id, tpsl_type, parent_address=...)` — list TP/SL plans for a position (`tpsl_type`: `"normal"` or `"position"`).
+
+Human-readable prices and quantities should be aligned to the contract tick/step (or decimal precision) **before** calling these methods. You can use `normalize_price` / `normalize_qty` in `dipcoin_client.util` for simple `round(..., precision)` style formatting, or apply tick/step rounding in your strategy.
+
+**`get_orders` and plan order types:** responses can include **ordinary limit/market orders and plan (TP/SL) orders** in the same list. Use the order field **`planOrderType`** to tell them apart:
+
+| `planOrderType` | Meaning |
+|-----------------|--------|
+| `open` | Regular  order（open/close） |
+| `takeProfit` | Take-profit plan order |
+| `stopLoss` | Stop-loss plan order |
+
+Filter or branch on this field when you only want classic working orders or only TP/SL plans.
+
 ### Getting productive quickly
 
 If you run into integration issues, **LLM / AI coding assistants** work well with this repo: point the tool at **`examples/`** and this README so it can map patterns (initialization, signing, orders, `parentAddress`) to your use case.

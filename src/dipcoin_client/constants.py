@@ -48,4 +48,8 @@ SERVICE_URLS = {
         "ORDERS_CANCEL": "/api/perp-trade-api/trade/cancelorder",
 
     },
+    "PLAN": {
+        "BATCH_PLAN_CLOSE": "/api/perp-trade-api/plan/batch/plancloseorder",
+        "POSITION_TPSL": "/api/perp-trade-api/plan/position/tpsl",
+    },
 }
