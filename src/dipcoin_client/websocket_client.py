@@ -165,7 +165,7 @@ class WebsocketClient:
         Listens to all events emitted by the server
         """
         data = json.loads(message)
-        print("listener", data)
+        # print("listener", data)
 
         event_name = data["topic"]
         try:

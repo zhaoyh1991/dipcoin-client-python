@@ -5,7 +5,7 @@ from dipcoin_client import DipcoinClient, Networks
 
 
 async def main():
-    seed_phrase = "autumn erode toilet hello produce energy black reject honey ball lawsuit copy"
+    seed_phrase = ""
 
     client = DipcoinClient(
         True,  # agree to terms and conditions

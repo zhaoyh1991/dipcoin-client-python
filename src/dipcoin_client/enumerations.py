@@ -19,14 +19,20 @@ class MARKET_SYMBOLS(Enum):
     XRP = "XRP-PERP"
     BNB = "BNB-PERP"
     PAXG = "PAXG-PERP"
+    HYPE = "HYPE-PERP"
+    LTC = "LTC-PERP"
+    DOGE = "DOGE-PERP"
+    LINK = "LINK-PERP"
+    AAVE = "AAVE-PERP"
+    ZEC = "ZEC-PERP"
+    TRUMP = "TRUMP-PERP"
+    TRX = "TRX-PERP"
+    ADA = "ADA-PERP"
 
-    
+
 class TIME_IN_FORCE(Enum):
     IMMEDIATE_OR_CANCEL = "IOC"
     GOOD_TILL_TIME = "GTT"
-
-
-
 
 
 class ORDER_STATUS(Enum):
@@ -76,9 +82,6 @@ class SOCKET_EVENTS(Enum):
 
     MARKET_DATA_UPDATE = "MarketDataUpdate"
     RECENT_TRADES = "perp/tradeList.{}"
-
-
-
 
 
 class MARGIN_TYPE(Enum):
