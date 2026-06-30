@@ -57,12 +57,11 @@ async def main():
     ######## Placing an Order ########
 
 
-    user_leverage = await client.get_user_leverage(MARKET_SYMBOLS.ETH)
 
     # creates a MARKET order to be signed
     signature_request = OrderSignatureRequest(
         symbol=MARKET_SYMBOLS.ETH,
-        leverage=user_leverage,
+        leverage=10,
         price=1300,
         quantity=0.5,
         side=ORDER_SIDE.BUY,

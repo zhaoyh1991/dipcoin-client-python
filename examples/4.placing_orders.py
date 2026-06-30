@@ -19,7 +19,7 @@ async def place_orders(client: DipcoinClient):
     adjusted_leverage = 10
     signature_request = OrderSignatureRequest(
         symbol=MARKET_SYMBOLS.ETH,  # market symbol
-        price=3000,  # price at which you want to place order
+        price=1500,  # price at which you want to place order
         quantity=0.01,  # quantity
         side=ORDER_SIDE.BUY,
         orderType=ORDER_TYPE.LIMIT,

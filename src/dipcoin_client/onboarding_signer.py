@@ -27,3 +27,8 @@ class OnboardingSigner(Signer):
 
         hash = hashlib.blake2b(intent, digest_size=32)
         return self.sign_hash(hash.digest(), private_key)
+
+    def create_wallet_signature(self, msg, wallet):
+        msg_dict = {"onboardingUrl": msg}
+        payload = json.dumps(msg_dict, separators=(",", ":")).encode("utf-8")
+        return wallet.sign_message(payload)

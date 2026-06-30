@@ -2,6 +2,7 @@ import json
 import logging
 from .socket_manager import SocketManager
 from .enumerations import MARKET_SYMBOLS, SOCKET_EVENTS
+from .util import humanize_websocket_payload, symbol_value
 
 
 class WebsocketClient:
@@ -86,7 +87,7 @@ class WebsocketClient:
             self.socket_manager.send_message(
                 json.dumps(
 
-                    {"op": "subscribe", "args": ["perp/ticker.{}".format(symbol.value)]}
+                    {"op": "subscribe", "args": ["perp/ticker.{}".format(symbol_value(symbol))]}
                 )
             )
             return True
@@ -104,7 +105,7 @@ class WebsocketClient:
             self.socket_manager.send_message(
                 json.dumps(
 
-                    {"op": "unsubscribe", "args": ["perp/ticker.{}".format(symbol.value)]}
+                    {"op": "unsubscribe", "args": ["perp/ticker.{}".format(symbol_value(symbol))]}
                 )
             )
             return True
@@ -128,7 +129,7 @@ class WebsocketClient:
 
             self.socket_manager.send_message(json.dumps(
                 {"op": "subscribe",
-                 "args": [SOCKET_EVENTS.ORDERBOOK_DEPTH_STREAM_ROOM.value.format(symbol.value, depth)]}
+                 "args": [SOCKET_EVENTS.ORDERBOOK_DEPTH_STREAM_ROOM.value.format(symbol_value(symbol), depth)]}
 
             ))
             return True
@@ -146,7 +147,7 @@ class WebsocketClient:
             self.socket_manager.send_message(json.dumps(
 
                 {"op": "subscribe",
-                 "args": [SOCKET_EVENTS.ORDERBOOK_DEPTH_STREAM_ROOM.value.format(symbol.value, depth)]}
+                 "args": [SOCKET_EVENTS.ORDERBOOK_DEPTH_STREAM_ROOM.value.format(symbol_value(symbol), depth)]}
             ))
             return True
         except:
@@ -165,17 +166,16 @@ class WebsocketClient:
         Listens to all events emitted by the server
         """
         data = json.loads(message)
-        # print("listener", data)
-
-        event_name = data["topic"]
+        event_name = data.get("topic")
+        payload = humanize_websocket_payload(event_name, data.get("data"))
         try:
             if event_name in self.callbacks:
                 callback = self.callbacks[event_name]
-                callback(data["data"])
+                callback(payload)
             elif "default" in self.callbacks.keys():
                 self.callbacks["default"]({"event": event_name, "data": data["data"]})
             else:
-                print("listener data ", data)
+                print("listener data ",event_name, payload)
         except:
             pass
         return

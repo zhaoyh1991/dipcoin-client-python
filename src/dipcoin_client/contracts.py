@@ -1,4 +1,5 @@
 from .enumerations import MARKET_SYMBOLS
+from .util import symbol_value
 
 
 _DEFAULT_MARKET = "BTC-PERP"
@@ -80,7 +81,7 @@ class Contracts:
 
     def set_contract_addresses(self, contracts_info):
         c_dict = {}
-        for c in contracts_info["data"]:
+        for c in contracts_info.get("data", contracts_info):
             c_dict[c["symbol"]] = c
 
         # print("c dict",c_dict)
@@ -111,12 +112,15 @@ class Contracts:
         return self.contracts_global_info["sequencer_id"]
 
     def get_position_table_id(self, market: MARKET_SYMBOLS) -> str:
-        return self.contracts_global_info["position_table_id"][market.value]
+        return self.contracts_global_info["position_table_ids"][symbol_value(market)]
 
     def get_price_oracle_object_id(self, market: MARKET_SYMBOLS):
-        return self.contracts_global_info["price_oracle_object_id"][market.value]
+        return self.contracts_global_info["price_oracle_object_id"][symbol_value(market)]
 
   
 
     def get_perpetual_id(self, market: MARKET_SYMBOLS):
-        return self.contract_info[market.value]["perpId"]
+        symbol = symbol_value(market)
+        if symbol not in self.contract_info:
+            raise KeyError(f"market {symbol} not found; call init() or get_exchange_info() first")
+        return self.contract_info[symbol]["perpId"]

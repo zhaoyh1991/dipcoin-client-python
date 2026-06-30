@@ -1,12 +1,14 @@
 Networks = {
     "SUI_STAGING": {
         "url": "https://fullnode.testnet.sui.io:443",
+        "graphqlUrl": "https://graphql.testnet.sui.io/graphql",
         "apiGateway": "https://demoapi.dipcoin.io/exchange/",
         "webSocketURL": "wss://demows.dipcoin.io/stream/ws",
         "onboardingUrl": "dipcoin.io"
     },
     "SUI_PROD": {
         "url": "https://fullnode.mainnet.sui.io:443",
+        "graphqlUrl": "https://graphql.mainnet.sui.io/graphql",
         "apiGateway": "https://gray-api.dipcoin.io",
         "webSocketURL": "wss://gray-ws.dipcoin.io/stream/ws",
         "onboardingUrl": "dipcoin.io"

@@ -19,7 +19,7 @@ async def main():
     data = await client.get_user_account_data()
     pprint(data)
 
-    position = await client.get_user_position({"symbol": MARKET_SYMBOLS.ETH})
+    position = await client.get_user_position({"symbol": MARKET_SYMBOLS.SUI})
     pprint(position)  # returns {} when user has no position
 
 

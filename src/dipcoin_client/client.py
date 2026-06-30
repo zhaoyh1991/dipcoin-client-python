@@ -6,21 +6,16 @@ from .api_service import APIService
 from .contracts import Contracts
 from .order_signer import OrderSigner
 from .onboarding_signer import OnboardingSigner
-from .constants import SUI_CLOCK_OBJECT_ID, TIME, SERVICE_URLS
+from .constants import TIME, SERVICE_URLS
+from .wallets import SOLANA_CHAIN_ID, SUI_CHAIN_ID, create_wallet_account, display_address
 from .websocket_client import WebsocketClient
 from sui_utils import *
 from .interfaces import *
 from .enumerations import *
+from .util import humanize_base18_response, humanize_candlestick_response, humanize_orderbook_response, symbol_value
 import time
 
 DEAULT_EXCHANGE_LEVERAGE = 3
-
-
-def _looks_like_bip39_mnemonic(s: str) -> bool:
-    words = s.split()
-    if len(words) not in (12, 15, 18, 21, 24):
-        return False
-    return all(w.isalpha() for w in words)
 
 
 class DipcoinClient:
@@ -28,19 +23,14 @@ class DipcoinClient:
     A class to represent a client for interacting with  offchain and onchain APIs.
     """
 
-    def __init__(self, are_terms_accepted, network, private_key="", parentAddress=""):
+    def __init__(self, are_terms_accepted, network, private_key="", parentAddress="", wallet_type="sui"):
         self.are_terms_accepted = are_terms_accepted
         self.network = network
         if private_key:
-            pk = private_key.strip()
-            if _looks_like_bip39_mnemonic(pk):
-                self.account = SuiWallet(seed=pk)
-            else:
-                self.account = SuiWallet(privateKey=pk)
+            self.account = create_wallet_account(private_key, wallet_type)
         else:
             self.account = None
-        if self.account is not None:
-            print("account", self.account.address)
+        self.wallet_chain_id = self.account.chain_id if self.account else SUI_CHAIN_ID
         self.apis = APIService(
             self.network["apiGateway"]
         )
@@ -49,16 +39,51 @@ class DipcoinClient:
         self.contracts = Contracts(self.network)
         self.order_signer = OrderSigner()
         self.onboarding_signer = OnboardingSigner()
-        self.contract_signer = Signer()
-        self.url = self.network["url"]
-        self.parentAddress = self.account.address.lower()
+        self.parentAddress = self._normalize_address(self.account.address) if self.account else ""
         if parentAddress != "":
-            self.parentAddress = parentAddress
+            self.parentAddress = self._normalize_address(parentAddress)
+
+    def _wallet_address(self) -> str:
+        return self.account.address if self.account is not None else ""
+
+    def _wallet_chain_id(self) -> int:
+        return self.account.chain_id if self.account is not None else SUI_CHAIN_ID
+
+    def _normalize_address(self, address: str) -> str:
+        if self._wallet_chain_id() == SOLANA_CHAIN_ID:
+            return address
+        return address.lower()
+
+    def _is_sui_wallet(self) -> bool:
+        return self._wallet_chain_id() == SUI_CHAIN_ID
+
+    def _display_creator_for_request(self, creator: str) -> str:
+        if self._is_sui_wallet() or ":" in creator:
+            return creator
+        return display_address(self._wallet_chain_id(), creator)
+
+    def _auth_get(self, service_url, query=None):
+        return self.apis.get(
+            service_url,
+            query or {},
+            auth_required=True,
+            wallet=self._wallet_address(),
+        )
+
+    def _auth_post(self, service_url, data):
+        return self.apis.post(
+            service_url,
+            data,
+            auth_required=True,
+            wallet=self._wallet_address(),
+        )
 
     def _ensure_parent_address_in_params(self, params: dict) -> None:
         """TypedDict request objects are plain dicts; optional parentAddress may be omitted."""
         if params.get("parentAddress", "") == "":
             params["parentAddress"] = self.parentAddress
+        else:
+            params["parentAddress"] = self._normalize_address(params["parentAddress"])
 
     async def init(self, user_onboarding=True, api_token="", auth_token=""):
         """
@@ -97,13 +122,17 @@ class DipcoinClient:
 
         # if no auth token provided create on
         if not user_auth_token:
-            onboarding_signature = self.onboarding_signer.create_signature(
-                self.network["onboardingUrl"], self.account.privateKeyBytes
-            )
-            onboarding_signature = (
-                    onboarding_signature + self.account.publicKeyBase64.decode()
-            )
-            print("self.account.address", self.account.address)
+            if self._is_sui_wallet():
+                onboarding_signature = self.onboarding_signer.create_signature(
+                    self.network["onboardingUrl"], self.account.privateKeyBytes
+                )
+                onboarding_signature = (
+                        onboarding_signature + self.account.publicKeyBase64.decode()
+                )
+            else:
+                onboarding_signature = self.onboarding_signer.create_wallet_signature(
+                    self.network["onboardingUrl"], self.account
+                )
             response = await self.authorize_signed_hash(onboarding_signature)
 
             if "error" in response:
@@ -159,9 +188,9 @@ class DipcoinClient:
         return Order(
             market=default_value(
                 params, "market", self.contracts.get_perpetual_id(
-                    params["symbol"])
+                    symbol_value(params["symbol"]))
             ),
-            creator=params["maker"].lower()
+            creator=self._normalize_address(params["maker"])
             if "maker" in params
             else self.parentAddress,
             isLong=params["side"] == ORDER_SIDE.BUY,
@@ -196,11 +225,11 @@ class DipcoinClient:
         order = self.create_order_to_sign(sui_params)
         # print("create_order_to_sign", order)
 
-        symbol = sui_params["symbol"].value
-        order_signature = self.order_signer.sign_order(
-            order, self.account.privateKeyBytes
+        symbol = symbol_value(sui_params["symbol"])
+        payload_version = 1 if self._is_sui_wallet() else 2
+        order_signature = self.order_signer.sign_order_with_wallet(
+            order, self.account, payload_version
         )
-        order_signature = order_signature + self.account.publicKeyBase64.decode()
         return OrderSignatureResponse(
             symbol=symbol,
             price=sui_params["price"],
@@ -212,7 +241,7 @@ class DipcoinClient:
             expiration=order["expiration"],
             orderSignature=order_signature,
             orderType=sui_params["orderType"],
-            creator=order["creator"],
+            creator=self._display_creator_for_request(order["creator"]),
 
         )
 
@@ -278,7 +307,7 @@ class DipcoinClient:
             raise ValueError("tpsl_type must be 'normal' or 'position'")
         if order_type == ORDER_TYPE.MARKET and order_price != 0:
             raise ValueError("order_price must be 0 for MARKET plan")
-        cr = creator.lower() if creator else self.parentAddress
+        cr = self._normalize_address(creator) if creator else self.parentAddress
         signed = self.create_signed_reduce_only_plan_order(
             symbol,
             close_side,
@@ -291,11 +320,11 @@ class DipcoinClient:
         return await self.apis.post(
             SERVICE_URLS["PLAN"]["BATCH_PLAN_CLOSE"],
             {
-                "symbol": symbol.value,
-                "side": close_side.value,
+                "symbol": symbol_value(symbol),
+                "side": symbol_value(close_side),
                 "leverage": self._mapping_get(signed, "leverage"),
                 "creator": cr,
-                "tpOrderType": order_type.value,
+                "tpOrderType": symbol_value(order_type),
                 "tpTpslType": tpsl_type,
                 "tpTriggerPrice": to_base18(trigger_price),
                 "tpOrderPrice": self._mapping_get(signed, "price"),
@@ -305,7 +334,7 @@ class DipcoinClient:
                 "tpOrderSignature": self._mapping_get(signed, "orderSignature"),
             },
             auth_required=True,
-            wallet=self.account.address,
+            wallet=self._wallet_address(),
         )
 
     async def set_stop_loss_plan(
@@ -329,7 +358,7 @@ class DipcoinClient:
             raise ValueError("tpsl_type must be 'normal' or 'position'")
         if order_type == ORDER_TYPE.MARKET and order_price != 0:
             raise ValueError("order_price must be 0 for MARKET plan")
-        cr = creator.lower() if creator else self.parentAddress
+        cr = self._normalize_address(creator) if creator else self.parentAddress
         signed = self.create_signed_reduce_only_plan_order(
             symbol,
             close_side,
@@ -342,11 +371,11 @@ class DipcoinClient:
         return await self.apis.post(
             SERVICE_URLS["PLAN"]["BATCH_PLAN_CLOSE"],
             {
-                "symbol": symbol.value,
-                "side": close_side.value,
+                "symbol": symbol_value(symbol),
+                "side": symbol_value(close_side),
                 "leverage": self._mapping_get(signed, "leverage"),
                 "creator": cr,
-                "slOrderType": order_type.value,
+                "slOrderType": symbol_value(order_type),
                 "slTpslType": tpsl_type,
                 "slTriggerPrice": to_base18(trigger_price),
                 "slOrderPrice": self._mapping_get(signed, "price"),
@@ -356,7 +385,7 @@ class DipcoinClient:
                 "slOrderSignature": self._mapping_get(signed, "orderSignature"),
             },
             auth_required=True,
-            wallet=self.account.address,
+            wallet=self._wallet_address(),
         )
 
     async def get_position_tpsl_plans(
@@ -373,13 +402,13 @@ class DipcoinClient:
             raise ValueError("tpsl_type must be 'normal' or 'position'")
         q: dict = {"positionId": position_id, "tpslType": tpsl_type}
         if parent_address:
-            q["parentAddress"] = parent_address.lower()
-        return await self.apis.get(
+            q["parentAddress"] = self._normalize_address(parent_address)
+        return humanize_base18_response(await self.apis.get(
             SERVICE_URLS["PLAN"]["POSITION_TPSL"],
             query=q,
             auth_required=True,
-            wallet=self.account.address,
-        )
+            wallet=self._wallet_address(),
+        ))
 
     def create_signed_cancel_order(
             self, params: OrderSignatureRequest, parentAddress: str = ""
@@ -411,7 +440,8 @@ class DipcoinClient:
             sui_params["triggerPrice"] = to_base18(sui_params["triggerPrice"])
 
         order_to_sign = self.create_order_to_sign(sui_params)
-        hash_val = self.order_signer.get_order_hash(order_to_sign)
+        payload_version = 1 if self._is_sui_wallet() else 2
+        hash_val = self.order_signer.get_order_hash(order_to_sign, payload_version, self._wallet_chain_id())
         return self.create_signed_cancel_orders(
             params["symbol"], hash_val.hex(), parentAddress
         )
@@ -431,20 +461,22 @@ class DipcoinClient:
         """
         if isinstance(order_hash, list) is False:
             order_hash = [order_hash]
-        cancel_hash = self.order_signer.encode_message(
-            {"orderHashes": order_hash})
-        hash_sig = (
-                self.order_signer.sign_hash(
-                    cancel_hash, self.account.privateKeyBytes, "")
-                + self.account.publicKeyBase64.decode()
-        )
+        msg = json.dumps({"orderHashes": order_hash}, separators=(",", ":")).encode("utf-8")
+        if self._is_sui_wallet():
+            cancel_hash = self.order_signer.encode_message({"orderHashes": order_hash})
+            hash_sig = (
+                    self.order_signer.sign_hash(
+                        cancel_hash, self.account.privateKeyBytes, "")
+                    + self.account.publicKeyBase64.decode()
+            )
+        else:
+            hash_sig = self.account.sign_message(msg)
         if parentAddress == "":
             parentAddress = self.parentAddress
-        print("hash_sig", hash_sig)
-        print("address", self.account.address)
-
+        else:
+            parentAddress = self._normalize_address(parentAddress)
         return OrderCancellationRequest(
-            symbol=symbol.value,
+            symbol=symbol_value(symbol),
             hashes=order_hash,
             signature=hash_sig,
             parentAddress=parentAddress,
@@ -458,8 +490,6 @@ class DipcoinClient:
         Returns:
             dict: response from orders delete API
         """
-        print("post_cancel_order", SERVICE_URLS["ORDERS"]["ORDERS_CANCEL"])
-
         return await self.apis.post(
             SERVICE_URLS["ORDERS"]["ORDERS_CANCEL"],
             {
@@ -468,7 +498,7 @@ class DipcoinClient:
                 "signature": params["signature"],
                 "parentAddress": params["parentAddress"],
             },
-            auth_required=True, wallet=self.account.address,
+            auth_required=True, wallet=self._wallet_address(),
         )
 
     async def cancel_all_orders(
@@ -490,9 +520,10 @@ class DipcoinClient:
         orders = await self.get_orders(
             {"symbol": symbol}
         )
-        print("cancel_all_orders", orders)
         if parentAddress == "":
             parentAddress = self.parentAddress
+        else:
+            parentAddress = self._normalize_address(parentAddress)
 
         hashes = []
         for i in orders["data"]["data"]:
@@ -521,348 +552,70 @@ class DipcoinClient:
             print(
                 "Warning: Reduce Only feature is deprecated until further notice. Reduce Only orders will be rejected from the API.")
 
+        data = {
+            "symbol": symbol_value(params["symbol"]),
+            "price": params["price"],
+            "quantity": params["quantity"],
+            "leverage": params["leverage"],
+            "creator": self._display_creator_for_request(params["creator"]),
+            "orderType": symbol_value(params["orderType"]),
+            "side": symbol_value(params["side"]),
+            "reduceOnly": params["reduceOnly"],
+            "salt": params["salt"],
+            "orderSignature": params["orderSignature"],
+            "clientId": "dipcoin-v2-client-python:{}".format(
+                default_value(params, "clientId", "")
+            ),
+        }
+        if not self._is_sui_wallet():
+            data = {"action": "PlaceOrder", **data}
+
         return await self.apis.post(
             SERVICE_URLS["ORDERS"]["ORDERS"],
-            {
-                "symbol": params["symbol"],
-                "price": params["price"],
-                "quantity": params["quantity"],
-                "leverage": params["leverage"],
-                "creator": params["creator"],
-                "orderType": params["orderType"].value,
-                "side": params["side"].value,
-                "reduceOnly": params["reduceOnly"],
-                "salt": params["salt"],
-                "orderSignature": params["orderSignature"],
-                "clientId": "dipcoin-v2-client-python:{}".format(
-                    default_value(params, "clientId", "")
-                ),
-            },
-            auth_required=True, wallet=self.account.address,
+            data,
+            auth_required=True, wallet=self._wallet_address(),
         )
 
-    # Contract calls
-    async def deposit_margin_to_bank(self, amount: int, coin_id: str = "") -> bool:
-        """
-        Deposits given amount of USDC from user's account to margin bank
-
-        Inputs:
-            amount (number): quantity of usdc to be deposited to bank in base decimals (1,2 etc)
-            coin_id (string) (optional): the id of the coin you want the amount to be deposited from
-
-        Returns:
-            Boolean: true if amount is successfully deposited, false otherwise
-        """
-        usdc_coins = self.get_usdc_coins()
-        if coin_id == "":
-            coin_id = self._get_coin_having_balance(usdc_coins["data"], amount)
-
-        package_id = self.contracts.get_package_id()
-        user_address = self.account.getUserAddress()
-        callArgs = []
-        callArgs.append(self.contracts.get_bank_id())
-
-        callArgs.append(self.contracts.get_sequencer_id())
-        callArgs.append(getSalt())
-
-        callArgs.append(self.account.getUserAddress())
-        callArgs.append(str(toUsdcBase(amount)))
-        callArgs.append(coin_id)
-
-        callArgs[2] = getsha256Hash(callArgs)
-
-        txBytes = rpc_unsafe_moveCall(
-            self.url,
-            callArgs,
-            "deposit_to_bank",
-            "margin_bank",
-            user_address,
-            package_id,
-            typeArguments=[self.contracts.get_currency_type()],
-        )
-        signature = self.contract_signer.sign_tx(txBytes, self.account)
-        res = rpc_sui_executeTransactionBlock(self.url, txBytes, signature)
-        try:
-            if res["result"]["effects"]["status"]["status"] == "success":
-                return True
-            else:
-                return False
-        except Exception as e:
-            return res
-
-    async def withdraw_margin_from_bank(self, amount: Union[float, int]) -> bool:
-        """
-        Withdraws given amount of usdc from margin bank if possible
-
-        Inputs:
-            amount (number): quantity of usdc to be withdrawn from bank in base decimals (1,2 etc)
-
-        Returns:
-            Boolean: true if amount is successfully withdrawn, false otherwise
-        """
-
-        bank_id = self.contracts.get_bank_id()
-        account_address = self.account.getUserAddress()
-
-        callArgs = [
-            bank_id,
-            self.contracts.get_sequencer_id(),
-            getSalt(),
-            account_address,
-            str(toUsdcBase(amount)),
-        ]
-
-        callArgs[2] = getsha256Hash(callArgs)
-        txBytes = rpc_unsafe_moveCall(
-            self.url,
-            callArgs,
-            "withdraw_from_bank",
-            "margin_bank",
-            self.account.getUserAddress(),
-            self.contracts.get_package_id(),
-            typeArguments=[self.contracts.get_currency_type()],
-        )
-        signature = self.contract_signer.sign_tx(txBytes, self.account)
-        res = rpc_sui_executeTransactionBlock(self.url, txBytes, signature)
-        try:
-            if res["result"]["effects"]["status"]["status"] == "success":
-                return True
-            else:
-                return False
-        except Exception as e:
-            return res
-
-    async def withdraw_all_margin_from_bank(self):
-        """
-        Withdraws everything of usdc from margin bank
-
-        Inputs:
-            No input Required
-        Returns:
-            Boolean: true if amount is successfully withdrawn, false otherwise
-        """
-        bank_id = self.contracts.get_bank_id()
-        account_address = self.account.getUserAddress()
-
-        callArgs = [
-            bank_id,
-            self.contracts.get_sequencer_id(),
-            getSalt(),
-            account_address,
-        ]
-
-        callArgs[2] = getsha256Hash(callArgs)
-        txBytes = rpc_unsafe_moveCall(
-            self.url,
-            callArgs,
-            "withdraw_all_margin_from_bank",
-            "margin_bank",
-            self.account.getUserAddress(),
-            self.contracts.get_package_id(),
-            typeArguments=[self.contracts.get_currency_type()],
-        )
-        signature = self.contract_signer.sign_tx(txBytes, self.account)
-        res = rpc_sui_executeTransactionBlock(self.url, txBytes, signature)
-
-        if res["result"]["effects"]["status"]["status"] == "success":
-            return True
-        else:
-            return False
-
-    async def adjust_margin(
+    # Relayer payload helpers
+    def create_margin_relay_signature(
             self,
             symbol: MARKET_SYMBOLS,
             operation: ADJUST_MARGIN,
-            amount: str,
-            parentAddress: str = "",
+            amount: Union[str, int, float],
+            salt: int = None,
+            expiration: int = 0,
+            userAddress: str = "",
     ):
-        """
-        Adjusts user's on-chain position by adding or removing the specified amount of margin.
-        Performs on-chain contract call, the user must have gas tokens
-        Inputs:
-            symbol (MARKET_SYMBOLS): market for which to adjust user leverage
-            operation (ADJUST_MARGIN): ADD/REMOVE adding or removing margin to position
-            amount (number): amount of margin to be adjusted
-            parentAddress (str): optional, if provided, the margin of parent is
-                                being adjusted (for sub accounts only)
-        Returns:
-            Boolean: true if the margin is adjusted
-        """
+        action = "AddMargin" if operation == ADJUST_MARGIN.ADD else "RemoveMargin"
+        market = self.contracts.get_perpetual_id(symbol)
+        user = self._normalize_address(userAddress) if userAddress else self.parentAddress
+        salt = salt if salt is not None else int(time.time() * 1000)
+        amount_base18 = to_base18(amount)
+        payload = "".join([
+            "{\n",
+            f"\"action\":\"{action}\",\n",
+            f"\"market\":\"{market}\",\n",
+            f"\"user\":\"{self._margin_display_address(user)}\",\n",
+            f"\"amount\":\"{amount_base18}\",\n",
+            f"\"salt\":\"{salt}\",\n",
+            f"\"expiration\":\"{expiration}\",\n",
+            "\"domain\":\"dipcoin.io\"\n",
+            "}",
+        ])
+        return {
+            "symbol": symbol_value(symbol),
+            "market": market,
+            "action": action,
+            "user": user,
+            "amount": str(amount_base18),
+            "salt": str(salt),
+            "expiration": str(expiration),
+            "payload": payload,
+            "signature": self.account.sign_message(payload.encode("utf-8")),
+        }
 
-        user_position = await self.get_user_position(
-            {"symbol": symbol}
-        )
-        print(user_position)
-
-        if user_position == {}:
-            raise (Exception(f"User has no open position on market: {symbol}"))
-
-        callArgs = []
-        callArgs.append(self.contracts.get_config_id())
-        callArgs.append(SUI_CLOCK_OBJECT_ID)
-        callArgs.append(self.contracts.get_perpetual_id(symbol))
-        callArgs.append(self.contracts.get_bank_id())
-
-        callArgs.append(self.contracts.get_sub_account_id())
-        callArgs.append(self.contracts.get_sequencer_id())
-
-        callArgs.append(self.contracts.get_price_oracle_object_id(symbol))
-
-        callArgs.append(self.account.getUserAddress())
-
-        callArgs.append(str(to_base18(amount)))
-
-        callArgs.append(getsha256Hash(callArgs + [getSalt()]))
-        print("callArgs", callArgs)
-
-        if operation == ADJUST_MARGIN.ADD:
-            txBytes = rpc_unsafe_moveCall(
-                self.url,
-                callArgs,
-                "add_margin",
-                "exchange",
-                self.account.getUserAddress(),
-                self.contracts.get_package_id(),
-                typeArguments=[self.contracts.get_currency_type()],
-            )
-
-        else:
-            txBytes = rpc_unsafe_moveCall(
-                self.url,
-                callArgs,
-                "remove_margin",
-                "exchange",
-                self.account.getUserAddress(),
-                self.contracts.get_package_id(),
-                typeArguments=[self.contracts.get_currency_type()],
-            )
-
-        signature = self.contract_signer.sign_tx(txBytes, self.account)
-        result = rpc_sui_executeTransactionBlock(self.url, txBytes, signature)
-        if result["result"]["effects"]["status"]["status"] == "success":
-            return True
-        else:
-            return False
-
-    async def update_sub_account(self, sub_account_address: str, status: bool) -> bool:
-        """
-        Used to whitelist and account as a sub account or revoke sub account status from an account.
-        Inputs:
-            sub_account_address (str): address of the sub account
-            status (bool): new status of the sub account
-
-        Returns:
-            Boolean: true if the sub account status is update
-        """
-        callArgs = []
-        callArgs.append(self.contracts.get_config_id())
-        callArgs.append(self.contracts.get_sub_account_id())
-        callArgs.append(sub_account_address)
-        callArgs.append(status)
-        txBytes = rpc_unsafe_moveCall(
-            self.url,
-            callArgs,
-            "set_sub_account",
-            "sub_accounts",
-            self.account.getUserAddress(),
-            self.contracts.get_package_id(),
-        )
-
-        signature = self.contract_signer.sign_tx(txBytes, self.account)
-        result = rpc_sui_executeTransactionBlock(self.url, txBytes, signature)
-        if result["result"]["effects"]["status"]["status"] == "success":
-            return True
-        else:
-            return False
-
-    async def get_native_chain_token_balance(self, userAddress: str = None) -> float:
-        """
-        Returns user's native chain token (SUI) balance
-        """
-        try:
-            callArgs = []
-            callArgs.append(userAddress or self.account.getUserAddress())
-            callArgs.append("0x2::sui::SUI")
-
-            result = rpc_call_sui_function(
-                self.url, callArgs, method="suix_getBalance"
-            )
-            return fromSuiBase(result.raw_response["totalBalance"])
-        except Exception as e:
-            raise (Exception(f"Failed to get balance, error: {e}"))
-
-    async def get_usdc_coins(self, userAddress: str = None):
-        """
-        Returns the list of the usdc coins owned by user
-        """
-        try:
-            callArgs = []
-            callArgs.append(userAddress or self.account.getUserAddress())
-            callArgs.append(self.contracts.get_currency_type())
-            result = rpc_call_sui_function(
-                self.url, callArgs, method="suix_getCoins")
-            return result.raw_response
-        except Exception as e:
-            raise (Exception("Failed to get USDC coins, Exception: {}".format(e)))
-
-    async def get_usdc_balance(self, userAddress: str = None) -> float:
-        """
-        Returns user's USDC token balance .
-        """
-        try:
-            callArgs = []
-            callArgs.append(userAddress or self.account.getUserAddress())
-            callArgs.append(self.contracts.get_currency_type())
-            result = rpc_call_sui_function(
-                self.url, callArgs, method="suix_getBalance"
-            )
-            return fromUsdcBase(result.raw_response["totalBalance"])
-
-        except Exception as e:
-            raise (Exception("Failed to get balance, Exception: {}".format(e)))
-
-    async def get_user_position_from_chain(self, market: MARKET_SYMBOLS, userAddress: str = None):
-        """
-        Returns the user positions from chain
-        """
-        try:
-            call_args = []
-            call_args.append(self.contracts.get_position_table_id(market))
-            call_args.append(
-                {"type": "address", "value": userAddress or self.account.getUserAddress()}
-            )
-            result = rpc_call_sui_function(
-                self.url, call_args, method="suix_getDynamicFieldObject"
-            )
-            if "error" in result.raw_response:
-                if result.raw_response["error"]["code"] == "dynamicFieldNotFound":
-                    return "Given user have no position open"
-            return result.raw_response["data"]["content"]["fields"]["value"]["fields"]
-
-        except Exception as e:
-            raise (Exception("Failed to get positions, Exception: {}".format(e)))
-
-    async def get_margin_bank_balance(self, userAddress: str = None) -> float:
-        """
-        Returns user's Margin Bank balance.
-        """
-        try:
-            call_args = []
-            call_args.append(self.contracts.get_bank_table_id())
-            call_args.append(
-                {"type": "address", "value": userAddress or self.account.getUserAddress()}
-            )
-            result = rpc_call_sui_function(
-                self.url, call_args, method="suix_getDynamicFieldObject"
-            ).raw_response
-            print("get_margin_bank_balance", result)
-
-            balance = fromSuiBase(
-                result["data"]["content"]["fields"]["value"]["fields"]["balance"]
-            )
-            return balance
-        except Exception as e:
-            raise (Exception("Failed to get balance, Exception: {}".format(e)))
+    def _margin_display_address(self, address: str) -> str:
+        return display_address(self._wallet_chain_id(), address)
 
     # Market endpoints
     async def get_orderbook(self, params: GetOrderbookRequest):
@@ -874,7 +627,7 @@ class DipcoinClient:
             dict: Orderbook snapshot
         """
         params = extract_enums(params, ["symbol"])
-        return await self.apis.get(SERVICE_URLS["MARKET"]["ORDER_BOOK"], params)
+        return humanize_orderbook_response(await self.apis.get(SERVICE_URLS["MARKET"]["ORDER_BOOK"], params))
 
     async def get_market_symbols(self):
         """
@@ -883,7 +636,8 @@ class DipcoinClient:
             list: active market symbols
         """
 
-        return await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"], {})
+        response = await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"], {})
+        return humanize_base18_response(response)
 
     async def get_funding_history(self, params: GetFundingHistoryRequest):
         """
@@ -896,9 +650,12 @@ class DipcoinClient:
         self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol"])
 
-        return await self.apis.get(
-            SERVICE_URLS["USER"]["FUNDING_HISTORY"], params, auth_required=True, wallet=self.account.address,
-        )
+        return humanize_base18_response(await self.apis.get(
+            SERVICE_URLS["USER"]["FUNDING_HISTORY"],
+            params,
+            auth_required=True,
+            wallet=self._wallet_address(),
+        ))
 
     async def get_exchange_info(self, symbol: MARKET_SYMBOLS = None):
         """
@@ -909,8 +666,9 @@ class DipcoinClient:
         Returns:
             dict: exchange info
         """
-        query = {"symbol": symbol.value} if symbol else {}
-        return await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"], query)
+        query = {"symbol": symbol_value(symbol)} if symbol else {}
+        response = await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"], query)
+        return humanize_base18_response(response)
 
     async def get_ticker_data(self, symbol: MARKET_SYMBOLS = None):
         """
@@ -920,8 +678,8 @@ class DipcoinClient:
         Returns:
             dict: ticker info
         """
-        query = {"symbol": symbol.value} if symbol else {}
-        return await self.apis.get(SERVICE_URLS["MARKET"]["TICKER"], query)
+        query = {"symbol": symbol_value(symbol)} if symbol else {}
+        return humanize_base18_response(await self.apis.get(SERVICE_URLS["MARKET"]["TICKER"], query))
 
     async def get_market_candle_stick_data(self, params: GetCandleStickRequest):
         """
@@ -933,7 +691,7 @@ class DipcoinClient:
         """
         params = extract_enums(params, ["symbol", "interval"])
 
-        return await self.apis.get(SERVICE_URLS["MARKET"]["CANDLE_STICK_DATA"], params)
+        return humanize_candlestick_response(await self.apis.get(SERVICE_URLS["MARKET"]["CANDLE_STICK_DATA"], params))
 
     def get_account(self):
         """
@@ -945,7 +703,7 @@ class DipcoinClient:
         """
         Returns the user account public address
         """
-        return self.account.address
+        return self._wallet_address()
 
     async def get_orders(self, params: GetOrderRequest):
         """
@@ -957,8 +715,12 @@ class DipcoinClient:
         """
         self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol"])
-        # print("get_orders", params)
-        return await self.apis.get(SERVICE_URLS["USER"]["ORDERS"], params, True, wallet=self.account.address, )
+        return humanize_base18_response(await self.apis.get(
+            SERVICE_URLS["USER"]["ORDERS"],
+            params,
+            True,
+            wallet=self._wallet_address(),
+        ))
 
     async def get_user_position(self, params: GetPositionRequest):
         """
@@ -971,7 +733,12 @@ class DipcoinClient:
         if params is not None:
             params = extract_enums(params, ["symbol"])
 
-        return await self.apis.get(SERVICE_URLS["USER"]["USER_POSITIONS"], params, True, wallet=self.account.address, )
+        return humanize_base18_response(await self.apis.get(
+            SERVICE_URLS["USER"]["USER_POSITIONS"],
+            params,
+            True,
+            wallet=self._wallet_address(),
+        ))
 
     async def get_user_trades(self, params: GetUserTradesRequest):
         """
@@ -983,7 +750,12 @@ class DipcoinClient:
         """
         self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol", "type"])
-        return await self.apis.get(SERVICE_URLS["USER"]["USER_TRADES"], params, True, wallet=self.account.address, )
+        return humanize_base18_response(await self.apis.get(
+            SERVICE_URLS["USER"]["USER_TRADES"],
+            params,
+            True,
+            wallet=self._wallet_address(),
+        ))
 
     async def get_user_account_data(self, parentAddress: str = ""):
         """
@@ -993,23 +765,16 @@ class DipcoinClient:
         """
         if parentAddress == "":
             parentAddress = self.parentAddress
+        else:
+            parentAddress = self._normalize_address(parentAddress)
 
-        return await self.apis.get(
+        return humanize_base18_response(await self.apis.get(
             service_url=SERVICE_URLS["USER"]["ACCOUNT"],
             query={"parentAddress": parentAddress},
             auth_required=True,
-            wallet=self.account.getUserAddress()
-        )
+            wallet=self._wallet_address(),
+        ))
 
     async def close_connections(self):
         # close aio http connection
         await self.apis.close_session()
-
-    def _get_coin_having_balance(self, usdc_coin_list: list, balance: int) -> str:
-        balance = toUsdcBase(balance)
-        for coin in usdc_coin_list:
-            if int(coin["balance"]) >= balance:
-                return coin["coinObjectId"]
-        raise Exception(
-            "Not enough balance available, please merge your coins for get usdc"
-        )

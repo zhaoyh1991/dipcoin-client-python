@@ -1,5 +1,6 @@
-from sui_utils import numberToHex, hexToByteArray, Signer,BCSSerializer
+from sui_utils import Signer
 from .interfaces import Order
+from .wallets import SUI_CHAIN_ID, display_address
 import hashlib
 
 
@@ -31,7 +32,7 @@ class OrderSigner(Signer):
             flag += 16
         return flag
 
-    def get_serialized_order(self, order: Order):
+    def get_serialized_order(self, order: Order, payload_version: int = 1, wallet_chain_id: int = SUI_CHAIN_ID):
         """
         Returns order hash.
         Inputs:
@@ -44,13 +45,18 @@ class OrderSigner(Signer):
         # Matches the Java reference implementation formatting.
         sb = []
         sb.append("{\n")
+        if payload_version == 2:
+            sb.append("\"action\":\"" + "PlaceOrder" + "\",\n")
         sb.append("\"market\":\"" + str(order.get("market", "")) + "\",\n")
-        sb.append("\"creator\":\"" + str(order.get("creator", "")) + "\",\n")
+        creator = str(order.get("creator", ""))
+        if payload_version == 2:
+            creator = display_address(wallet_chain_id, creator)
+        sb.append("\"creator\":\"" + creator + "\",\n")
         sb.append("\"isLong\":\"" + str(order.get("isLong", False)).lower() + "\",\n")
         sb.append("\"reduceOnly\":\"" + str(order.get("reduceOnly", False)).lower() + "\",\n")
-        sb.append("\"postOnly\":\"" + "false" + "\",\n")
-        sb.append("\"orderbookOnly\":\"" + "true" + "\",\n")
-        sb.append("\"ioc\":\"" + "false" + "\",\n")
+        sb.append("\"postOnly\":\"" + str(order.get("postOnly", False)).lower() + "\",\n")
+        sb.append("\"orderbookOnly\":\"" + str(order.get("orderbookOnly", True)).lower() + "\",\n")
+        sb.append("\"ioc\":\"" + str(order.get("ioc", False)).lower() + "\",\n")
         sb.append("\"quantity\":\"" + str(order.get("quantity", 0)) + "\",\n")
         sb.append("\"price\":\"" + str(order.get("price", 0)) + "\",\n")
         sb.append("\"leverage\":\"" + str(order.get("leverage", 0)) + "\",\n")
@@ -62,8 +68,8 @@ class OrderSigner(Signer):
         
         return "".join(sb)
 
-    def get_order_hash(self, order: Order):
-        buffer = self.get_serialized_order(order)
+    def get_order_hash(self, order: Order, payload_version: int = 1, wallet_chain_id: int = SUI_CHAIN_ID):
+        buffer = self.get_serialized_order(order, payload_version, wallet_chain_id)
         return hashlib.sha256(buffer).digest()
 
     def sign_order(self, order: Order, private_key):
@@ -107,3 +113,9 @@ class OrderSigner(Signer):
         # print("Message hash:", msg_hash.digest().hex())
 
         return self.sign_hash(msg_hash.digest(), private_key, "")
+
+    def sign_order_with_wallet(self, order: Order, wallet, payload_version: int = 1):
+        buffer = self.get_serialized_order(order, payload_version, wallet.chain_id)
+        if payload_version == 1 and wallet.chain_id == SUI_CHAIN_ID:
+            return self.sign_order(order, wallet.privateKeyBytes) + wallet.publicKeyBase64.decode()
+        return wallet.sign_message(buffer.encode("utf-8"))

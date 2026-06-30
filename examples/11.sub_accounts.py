@@ -24,11 +24,8 @@ async def main():
 
     print("Child: ", clientChild.get_public_address())
 
-    # # whitelist sub account
-    status = await clientParent.update_sub_account(
-        clientChild.get_public_address(), True
-    )
-    print(f"Sub account created: {status}")
+    print("Sub-account on-chain whitelist PTB construction is deferred.")
+    print("Use backend relayer/API flow before placing child-account orders.")
 
     parent_leverage = await clientParent.get_user_leverage(MARKET_SYMBOLS.ETH)
     await clientParent.adjust_leverage(MARKET_SYMBOLS.ETH, 1)

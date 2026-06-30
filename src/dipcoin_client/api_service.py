@@ -40,7 +40,7 @@ class APIService:
         if auth_required:
             headers = {
                 'Authorization': 'Bearer {}'.format(self.auth_token),
-                'x-wallet-address': wallet
+                'x-wallet-address': wallet,
             }
 
             response = await self.client.get(
@@ -145,5 +145,3 @@ class APIService:
         Appends namespace to server url
         """
         return "{}{}".format(self.server_url, path)
-
-

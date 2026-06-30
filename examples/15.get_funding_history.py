@@ -18,7 +18,7 @@ async def main():
 
     # create a funding history request
     funding_history_request = GetFundingHistoryRequest(
-        symbol=MARKET_SYMBOLS.ETH,  # market symbol
+        symbol=MARKET_SYMBOLS.SUI,  # market symbol
         pageSize=50,  # gets provided number of payments <= 50
         pageNum=0,  # fetch a particular page. A single page contains upto 50 records
     )
