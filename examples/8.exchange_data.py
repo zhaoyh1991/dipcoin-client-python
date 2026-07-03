@@ -33,7 +33,7 @@ async def main():
 
     # gets market candle info
     candle_data = await client.get_market_candle_stick_data(
-        {"symbol": MARKET_SYMBOLS.ETH, "interval": Interval._1m, "startTime": int(time.time()) - 60 * 10,
+        {"symbol": MARKET_SYMBOLS.BTC, "interval": Interval._1h, "startTime": int(time.time()) - 60 * 60,
          "endTime": int(time.time())}
     )
     print(candle_data)

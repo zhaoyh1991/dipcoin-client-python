@@ -2,7 +2,7 @@ import sys, os
 
 # sys.path.append(os.getcwd() + "/src/")
 import time
-from config import TEST_ACCT_KEY, TEST_NETWORK
+from config import TEST_ACCT_KEY, TEST_NETWORK,MAIN_NETWORK
 from dipcoin_client import (
     DipcoinClient,
     Networks,
@@ -25,7 +25,7 @@ def callback(event):
 
 
 async def main():
-    client = DipcoinClient(True, Networks[TEST_NETWORK], TEST_ACCT_KEY)
+    client = DipcoinClient(True, Networks[MAIN_NETWORK], TEST_ACCT_KEY)
     await client.init(True)
 
     def on_error(ws, error):
@@ -46,7 +46,7 @@ async def main():
 
 
         status = client.ws_client.subscribe_orderbook_depth_streams_by_symbol(MARKET_SYMBOLS.ETH)
-        print("Subscribed to  ETH events: {}".format(status))
+        # print("Subscribed to  ETH events: {}".format(status))
 
         # logs event name and data for all markets and users that are subscribed.
         # helpful for debugging

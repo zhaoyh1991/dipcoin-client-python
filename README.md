@@ -2,10 +2,18 @@
 
 A simple Python client library for interacting with the Dipcoin perp protocol, including its off-chain API gateway and on-chain contracts.
 
+## What's New in 1.2.0
+
+- Added Solana wallet support for onboarding plus v2 order/cancel signing.
+- Added preparatory ETH wallet signing support in the client for future Dipcoin enablement.
+- Kept Sui compatibility on the legacy v1 signing flow.
+- Humanized known 10^18-scaled numeric fields in both REST responses and websocket market/user payloads.
+- Switched direct Sui chain helpers to a lightweight GraphQL client without Rust-native dependencies.
+
 ## Requirements
 
 - Python 3.8 - 3.12 (recommended: Python 3.11)
-- Note: Python 3.13 is not supported due to gevent compatibility issues
+- No Rust toolchain, Sui CLI, or local Sui PTB builder is required for the default client.
 
 ## Installation
 
@@ -18,23 +26,20 @@ source venv/bin/activate  # macOS/Linux
 venv\Scripts\activate  # Windows
 ```
 
-### 2. Install Dependencies
+### 2. Install Package
 
 ```bash
-# Upgrade pip first
 pip install --upgrade pip
-
-# Install dependencies
-pip install -r requirements.in
+pip install dipcoin_client_sui
 ```
 
-### 3. Install Project in Development Mode
+For local development from this repository:
 
 ```bash
 pip install -e .
 ```
 
-This installs the project in editable mode, so code changes take effect immediately without reinstalling.
+This installs the project and direct dependencies in editable mode, so code changes take effect immediately without reinstalling.
 
 ## PyCharm Configuration
 
@@ -93,6 +98,17 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+### ETH and Solana wallets
+
+Use `wallet_type="solana"` to onboard and sign v2 order/cancel payloads today. `wallet_type="eth"` is implemented in the client as a preparatory integration, but Dipcoin does not currently support ETH wallets in production yet. Sui remains on the legacy v1 signature format for backward compatibility.
+
+```python
+client = DipcoinClient(True, Networks["SUI_PROD"], "0x...eth_private_key", wallet_type="eth")
+await client.init(True)
+```
+
+Solana accepts a 32-byte seed or 64-byte keypair encoded as hex, base64, base58, or a JSON byte array.
+
 ### Wallet credentials (mnemonic or private key)
 
 `DipcoinClient` accepts either:
@@ -110,6 +126,7 @@ The derived address and signing path match Sui’s Ed25519 wallet behavior (incl
 Some setups use a **sub-account** key that only has trading/API permissions, while the **main wallet** remains the parent on-chain identity.
 
 - When you authenticate with the **sub-account** key, pass the **main wallet address** as `parentAddress` in `DipcoinClient(...)`.
+- For Solana, both the sub-account and `parentAddress` are Solana addresses. The JWT is issued for the signing sub-account, while query/body `parentAddress` remains the raw parent Solana address.
 - When you use the **main wallet** mnemonic or private key directly, you normally **do not** need `parentAddress`; the client defaults it from your own address.
 
 Example (sub-account key + main wallet as parent), see `examples/test_sui_taker_pingpong.py`:
@@ -125,9 +142,44 @@ client = DipcoinClient(
 
 For **mainnet**, pass `Networks["SUI_PROD"]` as the second argument instead of `SUI_STAGING` (see `src/dipcoin_client/constants.py`).
 
+### Sui GraphQL helpers
+
+Direct Sui chain methods are no longer exposed on `DipcoinClient`. Use `SuiGraphQLClient` for lightweight direct Sui reads and GraphQL transaction submission without native dependencies.
+
+```python
+from dipcoin_client import DipcoinClient, Networks, SuiGraphQLClient
+
+client = DipcoinClient(True, Networks["SUI_PROD"], PRIVATE_KEY)
+await client.init(True)
+sui_chain = SuiGraphQLClient(client)
+balance = await sui_chain.get_native_chain_token_balance()
+```
+
+GraphQL execution is available through `SuiGraphQLClient.execute_transaction(transaction_data_bcs, signatures)`. Local PTB construction is not bundled because direct Sui writes are not a core SDK requirement and most product flows should go through Dipcoin relayers.
+
+If local Sui PTB construction becomes important, evaluate community tooling such as `pysui` or the Java reference implementation in `sui4j` as a separate package instead of adding native dependencies to this client.
+
+For new add/remove margin integrations, prefer `DipcoinClient.create_margin_relay_signature(...)` and submit the signed payload through backend relayer APIs once available.
+
 ### API numeric scaling (10¹⁸)
 
-**REST API responses expose many numeric quantities scaled by 10¹⁸** (fixed-point / “wei-style”). Before displaying or mixing with human-readable amounts, **convert** them (e.g. divide by `10**18`, or use helpers such as `from_wei` / project utilities in `sui_utils.utilities` where applicable). Treat all such fields consistently to avoid order-size or balance mistakes.
+Read endpoints such as order book, ticker, exchange info, orders, positions, trades, funding history, and account data now convert known 10¹⁸ fixed-point fields into human-readable strings without losing precision.
+
+Websocket payloads for ticker, order book, recent trades, and known user / market update topics are also normalized before your listener callback receives them, so websocket handling stays consistent with REST reads.
+
+Order placement and signatures still accept human-readable inputs and convert request fields to base-18 integers before submitting.
+
+### Publishing to PyPI
+
+```bash
+python -m pip install --upgrade build twine
+rm -rf build dist
+python -m build
+python -m twine check dist/*
+python -m twine upload dist/*
+```
+
+For TestPyPI, use `python -m twine upload --repository testpypi dist/*`. Ensure `pyproject.toml` has the intended version before building.
 
 ### Update: take profit & stop loss (plan orders)
 
@@ -167,12 +219,6 @@ dipcoin-client-python/
 ```
 
 ## Troubleshooting
-
-### Issue: gevent Compilation Error (Python 3.13)
-
-**Error**: `undeclared name not builtin: long`
-
-**Solution**: Use Python 3.8-3.12 instead of Python 3.13.
 
 ### Issue: coincurve Installation Error
 

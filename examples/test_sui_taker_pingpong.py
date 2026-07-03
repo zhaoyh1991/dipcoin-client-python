@@ -32,10 +32,10 @@ logger.add(
 
 @dataclass
 class PingPongConfig:
-    symbol: MARKET_SYMBOLS = MARKET_SYMBOLS.SUI
-    leverage: float = 3.0
-    trade_qty: float = 100.0
-    poll_interval_sec: int = 50
+    symbol: MARKET_SYMBOLS = MARKET_SYMBOLS.BTC
+    leverage: float = 40.0
+    trade_qty: float = 0.001
+    poll_interval_sec: int = 10
     orderbook_limit: int = 5
     # 每次开仓方向交替：False->开多, True->开空
     alternate_side: bool = True
@@ -164,18 +164,18 @@ async def loop_pingpong(client: DipcoinClient, cfg: PingPongConfig) -> None:
             # query position
             pos_side, pos_qty = await get_position_simple(client, cfg)
             # query account
-            account_data = await client.get_user_account_data()
-            open_orders = await client.get_orders({})
+            # account_data = await client.get_user_account_data()
+            # open_orders = await client.get_orders({})
             ### 
 
             logger.info(
-                "OB best_bid={} best_ask={} | position side={} qty={}| account_data={},open_orders={}",
+                "OB best_bid={} best_ask={} | position side={} qty={}",
                 best_bid,
                 best_ask,
                 pos_side,
                 pos_qty,
-                account_data,
-                open_orders
+                # account_data,
+                # open_orders
             )
             ##add tpsl plan
             #sui price precision is 4
@@ -192,6 +192,10 @@ async def loop_pingpong(client: DipcoinClient, cfg: PingPongConfig) -> None:
                 close_side = ORDER_SIDE.SELL if pos_side == "LONG" else ORDER_SIDE.BUY
                 resp = await place_market(client, cfg, close_side, pos_qty, reduce_only=True)
                 logger.info("CLOSE {} qty={} resp={}", pos_side, pos_qty, resp)
+                #制造告诉下单的问题
+                # resp2 = await place_market(client, cfg, close_side, pos_qty, reduce_only=True)
+                # logger.info("CLOSE {} qty={} resp2={}", pos_side, pos_qty, resp2)
+
                 await asyncio.sleep(max(1, cfg.poll_interval_sec))
                 continue
 

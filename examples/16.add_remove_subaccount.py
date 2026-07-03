@@ -18,17 +18,8 @@ async def main():
   print("Parent: ", clientParent.get_public_address())
   print("Child: ", clientChild.get_public_address())
 
-  # add child account as subaccount
-  status = await clientParent.update_sub_account(
-      clientChild.get_public_address(), True
-    )
-  print("Sub account added: {}\n".format(status))
-
-  # remove child account as subaccount
-  status = await clientParent.update_sub_account(
-      clientChild.get_public_address(), False
-    )
-  print("Sub account removed: {}\n".format(status))
+  print("Sub-account add/remove PTB construction is deferred.")
+  print("Use backend relayer/API flow when the endpoint is available.")
 
 
 if __name__ == "__main__":

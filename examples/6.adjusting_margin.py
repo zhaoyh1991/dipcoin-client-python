@@ -12,7 +12,6 @@ from dipcoin_client import (
 async def main():
     client = DipcoinClient(True, Networks[TEST_NETWORK], TEST_ACCT_KEY)
     await client.init(True)
-    print(await client.get_usdc_balance())
 
     # Already open positions on exchange can be queried using
     position = await client.get_user_position({"symbol": MARKET_SYMBOLS.ETH})
@@ -21,27 +20,15 @@ async def main():
         print("Account has no open position")
         return
 
-    # Add 100 USD from our margin bank into our ETH position on-chain
-    print("Adding Margin")
-    resp = await client.adjust_margin(MARKET_SYMBOLS.ETH, ADJUST_MARGIN.ADD, 1)
-    if resp is False:
-        print("Failed to add margin to position")
-        pprint(resp)
-
-    # get updated position margin. Note it can take a few seconds to show updates
-    # to on-chain positions on exchange as off-chain infrastructure waits for blockchain
-    # to emit position update event
-    position = await client.get_user_position({"symbol": MARKET_SYMBOLS.ETH})
-    print("Current margin in position:", position)
-
-    # Remove 1 USD from margin
-    print(
-        "Adjusting margin",
-        await client.adjust_margin(MARKET_SYMBOLS.ETH, ADJUST_MARGIN.REMOVE, 1),
+    # Direct PTB construction is deferred. Submit this payload to the Dipcoin
+    # relayer endpoint once it is available.
+    pprint(
+        client.create_margin_relay_signature(
+            MARKET_SYMBOLS.ETH,
+            ADJUST_MARGIN.ADD,
+            1,
+        )
     )
-
-    position = await client.get_user_position({"symbol": MARKET_SYMBOLS.ETH})
-    print("Current margin in position:", position)
 
     await client.close_connections()
 

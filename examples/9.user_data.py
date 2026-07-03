@@ -29,7 +29,7 @@ async def main():
 
 
     # gets user current position
-    position = await client.get_user_position({"symbol": MARKET_SYMBOLS.ETH})
+    position = await client.get_user_position({"symbol": MARKET_SYMBOLS.SUI})
 
     print("User position:")
     pprint(position)
