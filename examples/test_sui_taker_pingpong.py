@@ -45,7 +45,7 @@ def _parse_price(v) -> Optional[float]:
     if v is None:
         return None
     try:
-        return from1e18(v)
+        return float(v)
     except Exception:
         return None
 
@@ -54,7 +54,7 @@ def _parse_qty(v) -> Optional[float]:
     if v is None:
         return None
     try:
-        return from1e18(v)
+        return float(v)
     except Exception:
         return None
 
