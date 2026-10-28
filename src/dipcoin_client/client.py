@@ -1,4 +1,6 @@
 import json
+import base64
+import binascii
 from copy import deepcopy
 from typing import Any, Mapping, Optional, Union
 
@@ -7,15 +9,31 @@ from .contracts import Contracts
 from .order_signer import OrderSigner
 from .onboarding_signer import OnboardingSigner
 from .constants import TIME, SERVICE_URLS
-from .wallets import SOLANA_CHAIN_ID, SUI_CHAIN_ID, create_wallet_account, display_address
+from .wallets import (
+    SOLANA_CHAIN_ID,
+    SUI_CHAIN_ID,
+    create_wallet_account,
+    display_address,
+    raw_address_hex,
+)
 from .websocket_client import WebsocketClient
 from sui_utils import *
 from .interfaces import *
 from .enumerations import *
-from .util import humanize_base18_response, humanize_candlestick_response, humanize_orderbook_response, symbol_value
+from .util import (
+    calculate_max_removable_margin,
+    humanize_base18_response,
+    humanize_candlestick_response,
+    humanize_orderbook_response,
+    symbol_value,
+)
 import time
 
 DEAULT_EXCHANGE_LEVERAGE = 3
+DEFAULT_ORDER_PAYLOAD_VERSION = 3
+DEFAULT_TOKEN_REFRESH_MARGIN_SECONDS = 600
+DEFAULT_MARGIN_RELAY_VALIDITY_MS = 5 * 60 * 1000
+MAX_MARGIN_RELAY_VALIDITY_MS = 60 * 60 * 1000
 
 
 class DipcoinClient:
@@ -23,17 +41,35 @@ class DipcoinClient:
     A class to represent a client for interacting with  offchain and onchain APIs.
     """
 
-    def __init__(self, are_terms_accepted, network, private_key="", parentAddress="", wallet_type="sui"):
+    calculate_max_removable_margin = staticmethod(calculate_max_removable_margin)
+
+    def __init__(
+            self,
+            are_terms_accepted,
+            network,
+            private_key="",
+            parentAddress="",
+            wallet_type="sui",
+            auto_reauth=True,
+            token_refresh_margin_seconds=DEFAULT_TOKEN_REFRESH_MARGIN_SECONDS,
+            protocol_chain_id=None,
+    ):
         self.are_terms_accepted = are_terms_accepted
         self.network = network
         if private_key:
-            self.account = create_wallet_account(private_key, wallet_type)
+            self.account = create_wallet_account(
+                private_key,
+                wallet_type,
+                protocol_chain_id=protocol_chain_id,
+            )
         else:
             self.account = None
         self.wallet_chain_id = self.account.chain_id if self.account else SUI_CHAIN_ID
         self.apis = APIService(
             self.network["apiGateway"]
         )
+        self.auto_reauth = auto_reauth
+        self.token_refresh_margin_seconds = token_refresh_margin_seconds
 
         self.ws_client = WebsocketClient(self.network["webSocketURL"])
         self.contracts = Contracts(self.network)
@@ -57,26 +93,66 @@ class DipcoinClient:
     def _is_sui_wallet(self) -> bool:
         return self._wallet_chain_id() == SUI_CHAIN_ID
 
-    def _display_creator_for_request(self, creator: str) -> str:
-        if self._is_sui_wallet() or ":" in creator:
+    def _display_creator_for_request(self, creator: str, payload_version: int = DEFAULT_ORDER_PAYLOAD_VERSION) -> str:
+        if payload_version == 3 or self._is_sui_wallet() or ":" in creator:
             return creator
         return display_address(self._wallet_chain_id(), creator)
 
-    def _auth_get(self, service_url, query=None):
-        return self.apis.get(
+    def _order_payload_version(self, params: Mapping = None) -> int:
+        return int(default_value(params or {}, "payloadVersion", DEFAULT_ORDER_PAYLOAD_VERSION))
+
+    def _order_market_epoch(self, params: Mapping = None) -> int:
+        params = params or {}
+        if "marketEpoch" in params and params["marketEpoch"] is not None:
+            return int(params["marketEpoch"])
+        if "symbol" in params:
+            return self.contracts.get_market_epoch(params["symbol"])
+        return 0
+
+    async def _auth_get(self, service_url, query=None):
+        await self._refresh_auth_token_if_needed()
+        return await self.apis.get(
             service_url,
             query or {},
             auth_required=True,
             wallet=self._wallet_address(),
         )
 
-    def _auth_post(self, service_url, data):
-        return self.apis.post(
+    async def _auth_post(self, service_url, data):
+        await self._refresh_auth_token_if_needed()
+        return await self.apis.post(
             service_url,
             data,
             auth_required=True,
             wallet=self._wallet_address(),
         )
+
+    async def _refresh_auth_token_if_needed(self) -> None:
+        if not self.auto_reauth or self.apis.api_token or self.account is None:
+            return
+        if not self._is_auth_token_expiring(self.apis.auth_token):
+            return
+        self.apis.auth_token = await self.onboard_user()
+        self.ws_client.set_token(self.apis.auth_token)
+
+    def _is_auth_token_expiring(self, token: str) -> bool:
+        exp = self._jwt_exp(token)
+        if exp is None:
+            return False
+        return time.time() >= exp - self.token_refresh_margin_seconds
+
+    @staticmethod
+    def _jwt_exp(token: str) -> Optional[int]:
+        if not token:
+            return None
+        try:
+            payload = token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            data = json.loads(base64.urlsafe_b64decode(payload.encode("utf-8")))
+            exp = data.get("exp")
+            return int(exp) if exp is not None else None
+        except (IndexError, ValueError, TypeError, binascii.Error, json.JSONDecodeError):
+            return None
 
     def _ensure_parent_address_in_params(self, params: dict) -> None:
         """TypedDict request objects are plain dicts; optional parentAddress may be omitted."""
@@ -105,10 +181,11 @@ class DipcoinClient:
         # 2. priority to perform onboarding if `true` over auth_token
         elif user_onboarding:
             self.apis.auth_token = await self.onboard_user()
-            # self.ws_client.set_token(self.apis.auth_token)
+            self.ws_client.set_token(self.apis.auth_token)
         # 3. if user has provided auth token avoid onboarding again and use provided token
         elif auth_token:
-            self.webSocketClient.set_token(auth_token)
+            self.apis.auth_token = auth_token
+            self.ws_client.set_token(auth_token)
 
     async def onboard_user(self, token: str = None):
         """
@@ -160,6 +237,7 @@ class DipcoinClient:
                 "signature": signed_hash,
                 "userAddress": self.account.address,
                 "isTermAccepted": self.are_terms_accepted,
+                "chainId": self._wallet_chain_id(),
             }
         )
 
@@ -204,6 +282,7 @@ class DipcoinClient:
             expiration=default_value(params, "expiration", expiration),
             salt=default_value(params, "salt", int(time.time() * 1000)
                                ),
+            marketEpoch=self._order_market_epoch(params),
             domain="dipcoin.io"
 
         )
@@ -226,7 +305,7 @@ class DipcoinClient:
         # print("create_order_to_sign", order)
 
         symbol = symbol_value(sui_params["symbol"])
-        payload_version = 1 if self._is_sui_wallet() else 2
+        payload_version = self._order_payload_version(sui_params)
         order_signature = self.order_signer.sign_order_with_wallet(
             order, self.account, payload_version
         )
@@ -241,7 +320,9 @@ class DipcoinClient:
             expiration=order["expiration"],
             orderSignature=order_signature,
             orderType=sui_params["orderType"],
-            creator=self._display_creator_for_request(order["creator"]),
+            creator=self._display_creator_for_request(order["creator"], payload_version),
+            payloadVersion=payload_version,
+            marketEpoch=order["marketEpoch"],
 
         )
 
@@ -260,6 +341,8 @@ class DipcoinClient:
         quantity: Union[int, float],
         leverage: Union[int, float],
         maker: str = "",
+        payload_version: int = DEFAULT_ORDER_PAYLOAD_VERSION,
+        market_epoch: int = 0,
     ) -> OrderSignatureResponse:
         """
         Reduce-only order signature for TP/SL plan close. Matches server
@@ -279,6 +362,8 @@ class DipcoinClient:
             "ioc": False,
             "postOnly": False,
             "orderbookOnly": True,
+            "payloadVersion": payload_version,
+            "marketEpoch": market_epoch,
         }
         if maker:
             req["maker"] = maker
@@ -296,6 +381,8 @@ class DipcoinClient:
         tpsl_type: str = "normal",
         trigger_way: str = "oracle",
         creator: str = "",
+        payload_version: int = DEFAULT_ORDER_PAYLOAD_VERSION,
+        market_epoch: int = 0,
     ):
         """
         仅新增单笔止盈计划（不在同一请求中设置止损或修改已有计划）。
@@ -316,14 +403,20 @@ class DipcoinClient:
             quantity,
             leverage,
             maker=cr,
+            payload_version=payload_version,
+            market_epoch=market_epoch,
         )
-        return await self.apis.post(
+        signed_payload_version = self._mapping_get(signed, "payloadVersion")
+        signed_market_epoch = self._mapping_get(signed, "marketEpoch")
+        return await self._auth_post(
             SERVICE_URLS["PLAN"]["BATCH_PLAN_CLOSE"],
             {
                 "symbol": symbol_value(symbol),
                 "side": symbol_value(close_side),
                 "leverage": self._mapping_get(signed, "leverage"),
                 "creator": cr,
+                "payloadVersion": signed_payload_version,
+                "marketEpoch": signed_market_epoch,
                 "tpOrderType": symbol_value(order_type),
                 "tpTpslType": tpsl_type,
                 "tpTriggerPrice": to_base18(trigger_price),
@@ -333,8 +426,6 @@ class DipcoinClient:
                 "tpSalt": str(self._mapping_get(signed, "salt")),
                 "tpOrderSignature": self._mapping_get(signed, "orderSignature"),
             },
-            auth_required=True,
-            wallet=self._wallet_address(),
         )
 
     async def set_stop_loss_plan(
@@ -349,6 +440,8 @@ class DipcoinClient:
         tpsl_type: str = "normal",
         trigger_way: str = "oracle",
         creator: str = "",
+        payload_version: int = DEFAULT_ORDER_PAYLOAD_VERSION,
+        market_epoch: int = 0,
     ):
         """
         仅新增单笔止损计划（不在同一请求中设置止盈或修改已有计划）。
@@ -367,14 +460,20 @@ class DipcoinClient:
             quantity,
             leverage,
             maker=cr,
+            payload_version=payload_version,
+            market_epoch=market_epoch,
         )
-        return await self.apis.post(
+        signed_payload_version = self._mapping_get(signed, "payloadVersion")
+        signed_market_epoch = self._mapping_get(signed, "marketEpoch")
+        return await self._auth_post(
             SERVICE_URLS["PLAN"]["BATCH_PLAN_CLOSE"],
             {
                 "symbol": symbol_value(symbol),
                 "side": symbol_value(close_side),
                 "leverage": self._mapping_get(signed, "leverage"),
                 "creator": cr,
+                "payloadVersion": signed_payload_version,
+                "marketEpoch": signed_market_epoch,
                 "slOrderType": symbol_value(order_type),
                 "slTpslType": tpsl_type,
                 "slTriggerPrice": to_base18(trigger_price),
@@ -384,8 +483,6 @@ class DipcoinClient:
                 "slSalt": str(self._mapping_get(signed, "salt")),
                 "slOrderSignature": self._mapping_get(signed, "orderSignature"),
             },
-            auth_required=True,
-            wallet=self._wallet_address(),
         )
 
     async def get_position_tpsl_plans(
@@ -403,11 +500,9 @@ class DipcoinClient:
         q: dict = {"positionId": position_id, "tpslType": tpsl_type}
         if parent_address:
             q["parentAddress"] = self._normalize_address(parent_address)
-        return humanize_base18_response(await self.apis.get(
+        return humanize_base18_response(await self._auth_get(
             SERVICE_URLS["PLAN"]["POSITION_TPSL"],
             query=q,
-            auth_required=True,
-            wallet=self._wallet_address(),
         ))
 
     def create_signed_cancel_order(
@@ -440,7 +535,7 @@ class DipcoinClient:
             sui_params["triggerPrice"] = to_base18(sui_params["triggerPrice"])
 
         order_to_sign = self.create_order_to_sign(sui_params)
-        payload_version = 1 if self._is_sui_wallet() else 2
+        payload_version = self._order_payload_version(sui_params)
         hash_val = self.order_signer.get_order_hash(order_to_sign, payload_version, self._wallet_chain_id())
         return self.create_signed_cancel_orders(
             params["symbol"], hash_val.hex(), parentAddress
@@ -490,7 +585,7 @@ class DipcoinClient:
         Returns:
             dict: response from orders delete API
         """
-        return await self.apis.post(
+        return await self._auth_post(
             SERVICE_URLS["ORDERS"]["ORDERS_CANCEL"],
             {
                 "symbol": params["symbol"],
@@ -498,7 +593,6 @@ class DipcoinClient:
                 "signature": params["signature"],
                 "parentAddress": params["parentAddress"],
             },
-            auth_required=True, wallet=self._wallet_address(),
         )
 
     async def cancel_all_orders(
@@ -557,65 +651,177 @@ class DipcoinClient:
             "price": params["price"],
             "quantity": params["quantity"],
             "leverage": params["leverage"],
-            "creator": self._display_creator_for_request(params["creator"]),
+            "creator": self._display_creator_for_request(params["creator"], self._order_payload_version(params)),
             "orderType": symbol_value(params["orderType"]),
             "side": symbol_value(params["side"]),
             "reduceOnly": params["reduceOnly"],
             "salt": params["salt"],
             "orderSignature": params["orderSignature"],
-            "clientId": "dipcoin-v2-client-python:{}".format(
+            "payloadVersion": self._order_payload_version(params),
+            "marketEpoch": self._order_market_epoch(params),
+            "clientId": "dipcoin-v3-client-python:{}".format(
                 default_value(params, "clientId", "")
             ),
         }
-        if not self._is_sui_wallet():
+        if self._order_payload_version(params) == 2 and not self._is_sui_wallet():
             data = {"action": "PlaceOrder", **data}
 
-        return await self.apis.post(
+        return await self._auth_post(
             SERVICE_URLS["ORDERS"]["ORDERS"],
             data,
-            auth_required=True, wallet=self._wallet_address(),
         )
 
-    # Relayer payload helpers
-    def create_margin_relay_signature(
-            self,
-            symbol: MARKET_SYMBOLS,
-            operation: ADJUST_MARGIN,
-            amount: Union[str, int, float],
-            salt: int = None,
-            expiration: int = 0,
-            userAddress: str = "",
-    ):
-        action = "AddMargin" if operation == ADJUST_MARGIN.ADD else "RemoveMargin"
-        market = self.contracts.get_perpetual_id(symbol)
-        user = self._normalize_address(userAddress) if userAddress else self.parentAddress
-        salt = salt if salt is not None else int(time.time() * 1000)
-        amount_base18 = to_base18(amount)
-        payload = "".join([
+    @staticmethod
+    def _create_margin_relay_payload(
+            action: str,
+            market: str,
+            user: str,
+            amount: int,
+            salt: int,
+            expiration: int,
+    ) -> str:
+        return "".join([
             "{\n",
             f"\"action\":\"{action}\",\n",
             f"\"market\":\"{market}\",\n",
-            f"\"user\":\"{self._margin_display_address(user)}\",\n",
-            f"\"amount\":\"{amount_base18}\",\n",
+            f"\"user\":\"{user}\",\n",
+            f"\"amount\":\"{amount}\",\n",
             f"\"salt\":\"{salt}\",\n",
             f"\"expiration\":\"{expiration}\",\n",
             "\"domain\":\"dipcoin.io\"\n",
             "}",
         ])
-        return {
-            "symbol": symbol_value(symbol),
-            "market": market,
-            "action": action,
-            "user": user,
-            "amount": str(amount_base18),
-            "salt": str(salt),
-            "expiration": str(expiration),
-            "payload": payload,
-            "signature": self.account.sign_message(payload.encode("utf-8")),
-        }
 
-    def _margin_display_address(self, address: str) -> str:
-        return display_address(self._wallet_chain_id(), address)
+    def create_margin_relay_request(
+            self,
+            symbol: MarketSymbol,
+            operation: ADJUST_MARGIN,
+            amount: Union[str, int, float],
+            salt: int = None,
+            expiration: int = None,
+            parentAddress: str = "",
+    ) -> MarginRelayRequest:
+        if self.account is None:
+            raise ValueError("a wallet account is required to adjust margin")
+
+        if operation == ADJUST_MARGIN.ADD:
+            action = "AddMargin"
+        elif operation == ADJUST_MARGIN.REMOVE:
+            action = "RemoveMargin"
+        else:
+            raise ValueError("operation must be ADJUST_MARGIN.ADD or ADJUST_MARGIN.REMOVE")
+
+        market = self.contracts.get_perpetual_id(symbol)
+        user = (
+            self._normalize_address(parentAddress)
+            if parentAddress
+            else self.parentAddress
+        )
+        if not user:
+            raise ValueError("parentAddress is required")
+
+        try:
+            amount_base18 = int(to_base18(amount))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("amount must be a positive number") from exc
+        if amount_base18 <= 0:
+            raise ValueError("amount must be greater than zero at 1e18 precision")
+
+        salt_value = int(salt) if salt is not None else time.time_ns() // 1000
+        if salt_value < 0 or salt_value >= 2 ** 128:
+            raise ValueError("salt must be an unsigned 128-bit integer")
+
+        current_time_ms = int(time.time() * 1000)
+        expiration_value = (
+            int(expiration)
+            if expiration is not None
+            else current_time_ms + DEFAULT_MARGIN_RELAY_VALIDITY_MS
+        )
+        if expiration_value <= current_time_ms:
+            raise ValueError("expiration must be in the future")
+        if expiration_value - current_time_ms > MAX_MARGIN_RELAY_VALIDITY_MS:
+            raise ValueError("expiration must be within one hour")
+
+        chain_id = self._wallet_chain_id()
+        payload = self._create_margin_relay_payload(
+            action,
+            market,
+            display_address(chain_id, user),
+            amount_base18,
+            salt_value,
+            expiration_value,
+        )
+        signed = self.account.sign_relay_message(payload.encode("utf-8"))
+
+        return MarginRelayRequest(
+            action=action,
+            user=RelayUserAddress(
+                chainId=chain_id,
+                rawAddress=raw_address_hex(chain_id, user),
+            ),
+            params=MarginRelayParams(
+                market=market,
+                symbol=symbol_value(symbol),
+                amount=str(amount_base18),
+                salt=str(salt_value),
+                expiration=expiration_value,
+            ),
+            signature=signed["signature"],
+            publicKey=signed["publicKey"],
+        )
+
+    async def adjust_margin(
+            self,
+            symbol: MarketSymbol,
+            operation: ADJUST_MARGIN,
+            amount: Union[str, int, float],
+            salt: int = None,
+            expiration: int = None,
+            parentAddress: str = "",
+    ):
+        request = self.create_margin_relay_request(
+            symbol,
+            operation,
+            amount,
+            salt=salt,
+            expiration=expiration,
+            parentAddress=parentAddress,
+        )
+        return await self._auth_post(SERVICE_URLS["RELAYER"]["RELAY"], request)
+
+    async def add_margin(
+            self,
+            symbol: MarketSymbol,
+            amount: Union[str, int, float],
+            salt: int = None,
+            expiration: int = None,
+            parentAddress: str = "",
+    ):
+        return await self.adjust_margin(
+            symbol,
+            ADJUST_MARGIN.ADD,
+            amount,
+            salt=salt,
+            expiration=expiration,
+            parentAddress=parentAddress,
+        )
+
+    async def remove_margin(
+            self,
+            symbol: MarketSymbol,
+            amount: Union[str, int, float],
+            salt: int = None,
+            expiration: int = None,
+            parentAddress: str = "",
+    ):
+        return await self.adjust_margin(
+            symbol,
+            ADJUST_MARGIN.REMOVE,
+            amount,
+            salt=salt,
+            expiration=expiration,
+            parentAddress=parentAddress,
+        )
 
     # Market endpoints
     async def get_orderbook(self, params: GetOrderbookRequest):
@@ -650,11 +856,9 @@ class DipcoinClient:
         self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol"])
 
-        return humanize_base18_response(await self.apis.get(
+        return humanize_base18_response(await self._auth_get(
             SERVICE_URLS["USER"]["FUNDING_HISTORY"],
             params,
-            auth_required=True,
-            wallet=self._wallet_address(),
         ))
 
     async def get_exchange_info(self, symbol: MARKET_SYMBOLS = None):
@@ -715,11 +919,9 @@ class DipcoinClient:
         """
         self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol"])
-        return humanize_base18_response(await self.apis.get(
+        return humanize_base18_response(await self._auth_get(
             SERVICE_URLS["USER"]["ORDERS"],
             params,
-            True,
-            wallet=self._wallet_address(),
         ))
 
     async def get_user_position(self, params: GetPositionRequest):
@@ -733,11 +935,9 @@ class DipcoinClient:
         if params is not None:
             params = extract_enums(params, ["symbol"])
 
-        return humanize_base18_response(await self.apis.get(
+        return humanize_base18_response(await self._auth_get(
             SERVICE_URLS["USER"]["USER_POSITIONS"],
             params,
-            True,
-            wallet=self._wallet_address(),
         ))
 
     async def get_user_trades(self, params: GetUserTradesRequest):
@@ -750,11 +950,9 @@ class DipcoinClient:
         """
         self._ensure_parent_address_in_params(params)
         params = extract_enums(params, ["symbol", "type"])
-        return humanize_base18_response(await self.apis.get(
+        return humanize_base18_response(await self._auth_get(
             SERVICE_URLS["USER"]["USER_TRADES"],
             params,
-            True,
-            wallet=self._wallet_address(),
         ))
 
     async def get_user_account_data(self, parentAddress: str = ""):
@@ -768,11 +966,9 @@ class DipcoinClient:
         else:
             parentAddress = self._normalize_address(parentAddress)
 
-        return humanize_base18_response(await self.apis.get(
-            service_url=SERVICE_URLS["USER"]["ACCOUNT"],
-            query={"parentAddress": parentAddress},
-            auth_required=True,
-            wallet=self._wallet_address(),
+        return humanize_base18_response(await self._auth_get(
+            SERVICE_URLS["USER"]["ACCOUNT"],
+            {"parentAddress": parentAddress},
         ))
 
     async def close_connections(self):

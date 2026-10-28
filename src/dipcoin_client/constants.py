@@ -10,7 +10,7 @@ Networks = {
         "url": "https://fullnode.mainnet.sui.io:443",
         "graphqlUrl": "https://graphql.mainnet.sui.io/graphql",
         "apiGateway": "https://gray-api.dipcoin.io",
-        "webSocketURL": "wss://gray-ws.dipcoin.io/stream/ws",
+        "webSocketURL": "wss://ws.diptrade.com/stream/ws",
         "onboardingUrl": "dipcoin.io"
     },
 
@@ -53,5 +53,8 @@ SERVICE_URLS = {
     "PLAN": {
         "BATCH_PLAN_CLOSE": "/api/perp-trade-api/plan/batch/plancloseorder",
         "POSITION_TPSL": "/api/perp-trade-api/plan/position/tpsl",
+    },
+    "RELAYER": {
+        "RELAY": "/api/perp-relayer/v1/relay",
     },
 }

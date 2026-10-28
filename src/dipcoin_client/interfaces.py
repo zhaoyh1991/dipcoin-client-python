@@ -18,6 +18,7 @@ class Order(TypedDict):
     leverage: int
     expiration: int
     salt: int
+    marketEpoch: int
     orderFlag: int
     domain: str
 
@@ -37,11 +38,15 @@ class OrderSignatureRequest(RequiredOrderFields):
     expiration: int  # (optional) time at which order will expire. Will be set to 1 month if not provided
     maker: str  # (optional) maker of the order, defaults to the initialized account
     ioc: bool
+    payloadVersion: int  # (optional) order payload signature version, defaults to 3
+    marketEpoch: int  # (optional) required by payloadVersion=3, defaults to 0 before rebase
 
 
 class OrderSignatureResponse(RequiredOrderFields):
     maker: str
     orderSignature: str
+    payloadVersion: int
+    marketEpoch: int
 
 
 class PlaceOrderRequest(OrderSignatureResponse):
@@ -102,3 +107,24 @@ class GetFundingHistoryRequest(TypedDict):
     parentAddress: str
     pageSize: int  # will get only provided number of records, must be <= 50
     pageNum: int  # will fetch particular page records
+
+
+class RelayUserAddress(TypedDict):
+    chainId: int
+    rawAddress: str
+
+
+class MarginRelayParams(TypedDict):
+    market: str
+    symbol: str
+    amount: str
+    salt: str
+    expiration: int
+
+
+class MarginRelayRequest(TypedDict):
+    action: str
+    user: RelayUserAddress
+    params: MarginRelayParams
+    signature: str
+    publicKey: str

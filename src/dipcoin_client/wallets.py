@@ -12,9 +12,40 @@ from sui_utils import SuiWallet
 SUI_CHAIN_ID = 0
 ETH_CHAIN_ID = 1
 SOLANA_CHAIN_ID = 2
+ARBITRUM_CHAIN_ID = 3
+OPTIMISM_CHAIN_ID = 4
+BASE_CHAIN_ID = 5
+POLYGON_CHAIN_ID = 6
+
+EVM_CHAIN_IDS = frozenset(
+    {
+        ETH_CHAIN_ID,
+        ARBITRUM_CHAIN_ID,
+        OPTIMISM_CHAIN_ID,
+        BASE_CHAIN_ID,
+        POLYGON_CHAIN_ID,
+    }
+)
+EVM_CHAIN_NAMES = {
+    ETH_CHAIN_ID: "Ethereum",
+    ARBITRUM_CHAIN_ID: "Arbitrum",
+    OPTIMISM_CHAIN_ID: "Optimism",
+    BASE_CHAIN_ID: "Base",
+    POLYGON_CHAIN_ID: "Polygon",
+}
+EVM_WALLET_TYPES = {
+    "eth": ETH_CHAIN_ID,
+    "ethereum": ETH_CHAIN_ID,
+    "evm": ETH_CHAIN_ID,
+    "arbitrum": ARBITRUM_CHAIN_ID,
+    "optimism": OPTIMISM_CHAIN_ID,
+    "base": BASE_CHAIN_ID,
+    "polygon": POLYGON_CHAIN_ID,
+}
 
 SUI_ED25519_SCHEME = "1"
-ETH_PERSONAL_SIGN_SCHEME = "4"
+EVM_PERSONAL_SIGN_SCHEME = "4"
+ETH_PERSONAL_SIGN_SCHEME = EVM_PERSONAL_SIGN_SCHEME
 SOLANA_ED25519_SCHEME = "5"
 
 _B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -68,6 +99,39 @@ def join_signature(sig_hex: str, scheme: str, pubkey_raw: bytes) -> str:
     return f"{sig_hex}-{scheme}-{base64.b64encode(pubkey_raw).decode()}"
 
 
+def relay_signature(sig_raw: bytes, scheme: str, pubkey_raw: bytes) -> dict:
+    signature = sig_raw + bytes([int(scheme)])
+    return {
+        "signature": "0x" + signature.hex(),
+        "publicKey": "0x" + pubkey_raw.hex(),
+    }
+
+
+def raw_address_hex(chain_id: int, address: str) -> str:
+    if chain_id == SOLANA_CHAIN_ID:
+        raw = (
+            bytes.fromhex(_strip_0x(address))
+            if address.startswith(("0x", "0X"))
+            else _b58decode(address)
+        )
+        expected_length = 32
+    elif chain_id == SUI_CHAIN_ID:
+        raw = bytes.fromhex(_strip_0x(address))
+        expected_length = 32
+    elif chain_id in EVM_CHAIN_IDS:
+        raw = bytes.fromhex(_strip_0x(address))
+        expected_length = 20
+    else:
+        raise ValueError(f"unsupported chain id: {chain_id}")
+
+    if len(raw) != expected_length:
+        raise ValueError(
+            f"chain {chain_id} address must be {expected_length} bytes, "
+            f"got {len(raw)}"
+        )
+    return "0x" + raw.hex()
+
+
 @dataclass
 class WalletAccount:
     address: str
@@ -75,6 +139,9 @@ class WalletAccount:
     scheme: str
 
     def sign_message(self, message: bytes) -> str:
+        raise NotImplementedError
+
+    def sign_relay_message(self, message: bytes) -> dict:
         raise NotImplementedError
 
     def getUserAddress(self) -> str:
@@ -98,39 +165,72 @@ class SuiWalletAccount(WalletAccount):
     def publicKeyBase64(self):
         return self.wallet.publicKeyBase64
 
-    def sign_message(self, message: bytes) -> str:
-        from sui_utils import Signer, decimal_to_bcs
+    def _sign_raw_message(self, message: bytes) -> bytes:
+        from sui_utils import decimal_to_bcs
         import hashlib
 
         intent = bytearray([3, 0, 0])
         intent.extend(decimal_to_bcs(len(message)))
         intent.extend(message)
         digest = hashlib.blake2b(intent, digest_size=32).digest()
-        sig_hex = Signer().sign_hash(digest, self.privateKeyBytes, "")
-        return join_signature(sig_hex, self.scheme, base64.b64decode(self.publicKeyBase64))
+        return SigningKey(self.privateKeyBytes).sign(digest).signature
+
+    def sign_message(self, message: bytes) -> str:
+        sig = self._sign_raw_message(message)
+        return join_signature(
+            sig.hex(), self.scheme, base64.b64decode(self.publicKeyBase64)
+        )
+
+    def sign_relay_message(self, message: bytes) -> dict:
+        return relay_signature(
+            self._sign_raw_message(message),
+            self.scheme,
+            base64.b64decode(self.publicKeyBase64),
+        )
 
 
 class EthWalletAccount(WalletAccount):
-    def __init__(self, private_key: str):
+    def __init__(self, private_key: str, chain_id: int = ETH_CHAIN_ID):
         from coincurve import PrivateKey
         from eth_utils import keccak
 
+        if chain_id not in EVM_CHAIN_IDS:
+            raise ValueError(
+                "EVM protocol chain_id must be one of: 1, 3, 4, 5, 6"
+            )
         secret = _parse_secret_key(private_key)
         if len(secret) != 32:
-            raise ValueError("ETH private key must be 32 bytes")
+            raise ValueError("EVM private key must be 32 bytes")
         self.private_key = PrivateKey(secret)
         public_key = self.private_key.public_key.format(compressed=False)[1:]
+        self.compressed_public_key = self.private_key.public_key.format(compressed=True)
         address_bytes = keccak(public_key)[-20:]
         self.address_bytes = address_bytes
-        super().__init__("0x" + address_bytes.hex(), ETH_CHAIN_ID, ETH_PERSONAL_SIGN_SCHEME)
+        super().__init__(
+            "0x" + address_bytes.hex(), chain_id, EVM_PERSONAL_SIGN_SCHEME
+        )
 
-    def sign_message(self, message: bytes) -> str:
+    def _sign_raw_message(self, message: bytes) -> bytes:
         from eth_utils import keccak
 
         prefix = f"\x19Ethereum Signed Message:\n{len(message)}".encode()
         digest = keccak(prefix + message)
-        sig = self.private_key.sign_recoverable(digest, hasher=None)
+        return self.private_key.sign_recoverable(digest, hasher=None)
+
+    def sign_message(self, message: bytes) -> str:
+        sig = self._sign_raw_message(message)
         return join_signature(sig.hex(), self.scheme, self.address_bytes)
+
+    def sign_relay_message(self, message: bytes) -> dict:
+        return relay_signature(
+            self._sign_raw_message(message),
+            self.scheme,
+            self.compressed_public_key,
+        )
+
+
+# Backward-compatible name plus a chain-agnostic EVM name for new integrations.
+EvmWalletAccount = EthWalletAccount
 
 
 class SolanaWalletAccount(WalletAccount):
@@ -145,9 +245,17 @@ class SolanaWalletAccount(WalletAccount):
         self.pubkey = pubkey
         super().__init__(_b58encode(pubkey), SOLANA_CHAIN_ID, SOLANA_ED25519_SCHEME)
 
+    def _sign_raw_message(self, message: bytes) -> bytes:
+        return self.signing_key.sign(message).signature
+
     def sign_message(self, message: bytes) -> str:
-        sig = self.signing_key.sign(message).signature
+        sig = self._sign_raw_message(message)
         return join_signature(sig.hex(), self.scheme, self.pubkey)
+
+    def sign_relay_message(self, message: bytes) -> dict:
+        return relay_signature(
+            self._sign_raw_message(message), self.scheme, self.pubkey
+        )
 
 
 def _looks_like_bip39_mnemonic(value: str) -> bool:
@@ -155,22 +263,47 @@ def _looks_like_bip39_mnemonic(value: str) -> bool:
     return len(words) in (12, 15, 18, 21, 24) and all(word.isalpha() for word in words)
 
 
-def create_wallet_account(private_key: str, wallet_type: Optional[str] = None) -> WalletAccount:
+def create_wallet_account(
+    private_key: str,
+    wallet_type: Optional[str] = None,
+    protocol_chain_id: Optional[int] = None,
+) -> WalletAccount:
     normalized = (wallet_type or "sui").lower()
     if normalized in ("sui", "sui_ed25519"):
+        if protocol_chain_id not in (None, SUI_CHAIN_ID):
+            raise ValueError("Sui wallet requires protocol_chain_id=0")
         return SuiWalletAccount(private_key)
-    if normalized in ("eth", "ethereum", "evm"):
-        return EthWalletAccount(private_key)
+    if normalized in EVM_WALLET_TYPES:
+        wallet_type_chain_id = EVM_WALLET_TYPES[normalized]
+        chain_id = (
+            wallet_type_chain_id
+            if protocol_chain_id is None
+            else protocol_chain_id
+        )
+        if (
+            normalized not in ("eth", "ethereum", "evm")
+            and chain_id != wallet_type_chain_id
+        ):
+            raise ValueError(
+                f"wallet_type='{normalized}' requires "
+                f"protocol_chain_id={wallet_type_chain_id}"
+            )
+        return EthWalletAccount(private_key, chain_id)
     if normalized in ("sol", "solana"):
+        if protocol_chain_id not in (None, SOLANA_CHAIN_ID):
+            raise ValueError("Solana wallet requires protocol_chain_id=2")
         return SolanaWalletAccount(private_key)
-    raise ValueError("wallet_type must be one of: sui, eth, solana")
+    raise ValueError(
+        "wallet_type must be one of: sui, eth, solana, arbitrum, "
+        "optimism, base, polygon"
+    )
 
 
 def display_address(chain_id: int, address: str) -> str:
     if chain_id == SUI_CHAIN_ID:
         return "Sui:" + address.lower()
-    if chain_id == ETH_CHAIN_ID:
-        return "Ethereum:" + address.lower()
+    if chain_id in EVM_CHAIN_IDS:
+        return EVM_CHAIN_NAMES[chain_id] + ":" + address.lower()
     if chain_id == SOLANA_CHAIN_ID:
         return "Solana:" + address
     raise ValueError(f"unsupported chain id: {chain_id}")

@@ -124,3 +124,13 @@ class Contracts:
         if symbol not in self.contract_info:
             raise KeyError(f"market {symbol} not found; call init() or get_exchange_info() first")
         return self.contract_info[symbol]["perpId"]
+
+    def get_market_epoch(self, market: MARKET_SYMBOLS) -> int:
+        symbol = symbol_value(market)
+        if symbol not in self.contract_info:
+            raise KeyError(f"market {symbol} not found; call init() or get_exchange_info() first")
+        market_info = self.contract_info[symbol]
+        for key in ("marketEpoch", "market_epoch", "epoch"):
+            if key in market_info and market_info[key] is not None:
+                return int(market_info[key])
+        return 0
