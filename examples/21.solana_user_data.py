@@ -1,28 +1,40 @@
 import asyncio
+import os
 from pprint import pprint
 
 from config import TEST_NETWORK
 from dipcoin_client import DipcoinClient, MARKET_SYMBOLS, Networks
 
 
-SOLANA_PARENT_ADDRESS = "2ERFGBW7XG3jTuMYHf7JD4nPSauKV4eV3sk8aCjENeQw"
-SOLANA_SUB_ACCOUNT_ADDRESS = "FUrJrAezwXjmwq2DfAAYJ2XKk4V6Z1GfySZdEQFWmAEW"
-SOLANA_SUB_ACCOUNT_PRIVATE_KEY = "4f7Gi71DQAZyiBzMES4fBSdBF3xhRtiXDzSNQKwWnELr3191MKoD4yfXKDsSxAHv9uDSNzC5pkNzEEVREGfyKVbG"
+SOLANA_PARENT_ADDRESS_ENV = "DIPCOIN_SOLANA_PARENT_ADDRESS"
+SOLANA_API_ADDRESS_ENV = "DIPCOIN_SOLANA_API_ADDRESS"
+SOLANA_PRIVATE_KEY_ENV = "DIPCOIN_SOLANA_API_PRIVATE_KEY"
 
 
 async def main():
+    parent_address = os.getenv(SOLANA_PARENT_ADDRESS_ENV)
+    api_address = os.getenv(SOLANA_API_ADDRESS_ENV)
+    private_key = os.getenv(SOLANA_PRIVATE_KEY_ENV)
+    for variable_name, value in (
+        (SOLANA_PARENT_ADDRESS_ENV, parent_address),
+        (SOLANA_API_ADDRESS_ENV, api_address),
+        (SOLANA_PRIVATE_KEY_ENV, private_key),
+    ):
+        if not value:
+            raise RuntimeError(f"Set {variable_name} before running this example")
+
     client = DipcoinClient(
         True,
         Networks[TEST_NETWORK],
-        SOLANA_SUB_ACCOUNT_PRIVATE_KEY,
-        parentAddress=SOLANA_PARENT_ADDRESS,
+        private_key,
+        parentAddress=parent_address,
         wallet_type="solana",
     )
     await client.init(True)
 
-    assert client.get_public_address() == SOLANA_SUB_ACCOUNT_ADDRESS
+    assert client.get_public_address() == api_address
     print("sub_account:", client.get_public_address())
-    print("parentAddress:", SOLANA_PARENT_ADDRESS)
+    print("parentAddress:", parent_address)
 
     orders = await client.get_orders({})
     print("Solana sub-account orders:")
