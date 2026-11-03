@@ -2,12 +2,14 @@
 
 A simple Python client library for interacting with the Dipcoin perp protocol, including its off-chain API gateway and on-chain contracts.
 
-## What's New in 1.2.0
+## What's New in 1.3.0
 
 - Added Solana wallet support for onboarding plus v3 order and plan-order signing.
 - Added Ethereum, Arbitrum, Optimism, Base, and Polygon wallet support with
   protocol-chain-aware authorization and v3 signing.
 - Sui wallets remain supported; order and plan-order signing now defaults to v3.
+- Added relayer-based margin adjustment for Sui, Solana, and EVM wallets.
+- Added a fixed-point helper for estimating maximum removable margin.
 - Humanized known 10^18-scaled numeric fields in both REST responses and websocket market/user payloads.
 - Switched direct Sui chain helpers to a lightweight GraphQL client without Rust-native dependencies.
 
@@ -31,7 +33,7 @@ venv\Scripts\activate  # Windows
 
 ```bash
 pip install --upgrade pip
-pip install dipcoin_client_sui
+pip install dipcoin-client
 ```
 
 For local development from this repository:
@@ -160,7 +162,14 @@ plan-order signatures.
 
 Solana accepts a 32-byte seed or 64-byte keypair encoded as hex, base64, base58, or a JSON byte array.
 
-Order and plan-order signatures default to `payloadVersion=3`. The client reads `marketEpoch` from exchange info during `init()` and falls back to `0` only when the market does not expose it yet. Pass `payloadVersion` or `marketEpoch` only when you need to override those defaults for a specific request.
+Order and plan-order signatures default to `payloadVersion=3`. The client reads `marketEpoch` from exchange info during `init()` and falls back to `0` only when the market does not expose it yet. In a long-running process, refresh the market cache before signing when its 60-second TTL has elapsed:
+
+```python
+await client.refresh_market_info_if_stale()
+signed_order = client.create_signed_order(order_request)
+```
+
+The refresh interval can be changed with `market_info_cache_ttl_seconds` when creating `DipcoinClient`. `get_exchange_info()` also updates the signing cache with the data it fetches. Pass `payloadVersion` or `marketEpoch` only when you need to override those defaults for a specific request.
 
 ### Wallet credentials (mnemonic or private key)
 
@@ -243,18 +252,6 @@ Read endpoints such as order book, ticker, exchange info, orders, positions, tra
 Websocket payloads for ticker, order book, recent trades, and known user / market update topics are also normalized before your listener callback receives them, so websocket handling stays consistent with REST reads.
 
 Order placement and signatures still accept human-readable inputs and convert request fields to base-18 integers before submitting.
-
-### Publishing to PyPI
-
-```bash
-python -m pip install --upgrade build twine
-rm -rf build dist
-python -m build
-python -m twine check dist/*
-python -m twine upload dist/*
-```
-
-For TestPyPI, use `python -m twine upload --repository testpypi dist/*`. Ensure `pyproject.toml` has the intended version before building.
 
 ### Update: take profit & stop loss (plan orders)
 
@@ -340,10 +337,10 @@ pip install --no-cache-dir --force-reinstall coincurve==17.0.0
 pip install -e .
 
 # Uninstall project
-pip uninstall dipcoin_client_sui
+pip uninstall dipcoin-client
 
 # Check installed package
-pip show dipcoin_client_sui
+pip show dipcoin-client
 
 # Upgrade pip
 pip install --upgrade pip

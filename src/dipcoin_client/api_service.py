@@ -144,4 +144,4 @@ class APIService:
         """
         Appends namespace to server url
         """
-        return "{}{}".format(self.server_url, path)
+        return "{}/{}".format(self.server_url.rstrip("/"), path.lstrip("/"))

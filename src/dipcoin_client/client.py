@@ -53,6 +53,7 @@ class DipcoinClient:
             auto_reauth=True,
             token_refresh_margin_seconds=DEFAULT_TOKEN_REFRESH_MARGIN_SECONDS,
             protocol_chain_id=None,
+            market_info_cache_ttl_seconds=60,
     ):
         self.are_terms_accepted = are_terms_accepted
         self.network = network
@@ -70,6 +71,8 @@ class DipcoinClient:
         )
         self.auto_reauth = auto_reauth
         self.token_refresh_margin_seconds = token_refresh_margin_seconds
+        self.market_info_cache_ttl_seconds = max(0, float(market_info_cache_ttl_seconds))
+        self._market_info_refreshed_at = None
 
         self.ws_client = WebsocketClient(self.network["webSocketURL"])
         self.contracts = Contracts(self.network)
@@ -168,10 +171,7 @@ class DipcoinClient:
             user_onboarding (bool, optional): If set to true onboards the user address to exchange and gets authToken. Defaults to True.
             api_token(string, optional): API token to initialize client in read-only mode
         """
-        contract_info = await self.get_contract_addresses()
-        # print("contract_info",contract_info)
-
-        self.contracts.set_contract_addresses(contract_info)
+        await self.refresh_market_info_if_stale(force=True)
 
         # 1. priority to read only mode
         if api_token:
@@ -247,6 +247,26 @@ class DipcoinClient:
             dict: all contract addresses for the all markets.
         """
         return await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"])
+
+    async def refresh_market_info_if_stale(self, force=False):
+        """Refresh cached market configuration (including marketEpoch) when stale.
+
+        Call this before creating signed orders in long-running clients. The
+        synchronous signing methods use the latest market info in this cache.
+        Returns True when an API refresh was performed.
+        """
+        now = time.monotonic()
+        if (
+            not force
+            and self._market_info_refreshed_at is not None
+            and now - self._market_info_refreshed_at < self.market_info_cache_ttl_seconds
+        ):
+            return False
+
+        market_info = await self.get_contract_addresses()
+        self.contracts.set_contract_addresses(market_info)
+        self._market_info_refreshed_at = time.monotonic()
+        return True
 
     def create_order_to_sign(self, params: OrderSignatureRequest) -> Order:
         """
@@ -872,6 +892,11 @@ class DipcoinClient:
         """
         query = {"symbol": symbol_value(symbol)} if symbol else {}
         response = await self.apis.get(SERVICE_URLS["MARKET"]["EXCHANGE_INFO"], query)
+        if symbol is None:
+            self.contracts.set_contract_addresses(response)
+            self._market_info_refreshed_at = time.monotonic()
+        else:
+            self.contracts.update_market_info(response)
         return humanize_base18_response(response)
 
     async def get_ticker_data(self, symbol: MARKET_SYMBOLS = None):
