@@ -17,10 +17,6 @@ dependencies = [
   'websocket-client>=1.6,<2'
 ]
 
-[project.urls]
-Homepage = "https://github.com/zhaoyh1991/dipcoin-client-python"
-Repository = "https://github.com/zhaoyh1991/dipcoin-client-python"
-
 [tool.setuptools]
 package-dir = {"" = "src"}
 

@@ -1,4 +1,5 @@
 import asyncio
+import os
 from pprint import pprint
 
 from config import TEST_NETWORK
@@ -13,29 +14,37 @@ from dipcoin_client import (
 )
 
 
-# Test-wallet credentials only. Do not use a private key that holds real funds.
-ETH_PARENT_ADDRESS = "0x72cfe0e5e4de41b23dc998de9e5160f65e18eda0"
-ETH_API_ACCOUNT_ADDRESS = "0xf55c9893b3bb7e639c7856ff76c6f2439711caa3"
-ETH_API_ACCOUNT_PRIVATE_KEY = (
-    "0x704d035af33657d0793d9cf9b8cb412a6b9c887fd18cdf4e8662dde5c44ee280"
-)
+ETH_PARENT_ADDRESS_ENV = "DIPCOIN_ETH_PARENT_ADDRESS"
+ETH_API_ADDRESS_ENV = "DIPCOIN_ETH_API_ADDRESS"
+ETH_PRIVATE_KEY_ENV = "DIPCOIN_ETH_API_PRIVATE_KEY"
 
 
 async def main():
+    parent_address = os.getenv(ETH_PARENT_ADDRESS_ENV)
+    api_address = os.getenv(ETH_API_ADDRESS_ENV)
+    private_key = os.getenv(ETH_PRIVATE_KEY_ENV)
+    for variable_name, value in (
+        (ETH_PARENT_ADDRESS_ENV, parent_address),
+        (ETH_API_ADDRESS_ENV, api_address),
+        (ETH_PRIVATE_KEY_ENV, private_key),
+    ):
+        if not value:
+            raise RuntimeError(f"Set {variable_name} before running this example")
+
     client = DipcoinClient(
         True,
         Networks[TEST_NETWORK],
-        ETH_API_ACCOUNT_PRIVATE_KEY,
-        parentAddress=ETH_PARENT_ADDRESS,
+        private_key,
+        parentAddress=parent_address,
         wallet_type="eth",
         protocol_chain_id=ETH_CHAIN_ID,
     )
     try:
         await client.init(True)
 
-        assert client.get_public_address() == ETH_API_ACCOUNT_ADDRESS
+        assert client.get_public_address() == api_address
         print("api_account:", client.get_public_address())
-        print("parentAddress:", ETH_PARENT_ADDRESS)
+        print("parentAddress:", parent_address)
 
         order = OrderSignatureRequest(
             symbol=MARKET_SYMBOLS.BTC,

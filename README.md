@@ -75,6 +75,23 @@ TEST_NETWORK = "SUI_STAGING"  # mainnet: use "SUI_PROD"
 
 **⚠️ Security Warning**: The `TEST_ACCT_KEY` in `examples/config.py` is a secret (mnemonic or private key). Keep it secure and never commit it to version control.
 
+Examples `21.solana_user_data.py`, `22.solana_place_query_cancel_order.py` and
+`23.eth_place_query_cancel_order.py` read the parent/API addresses and API
+private key from environment variables. Copy `examples/.env.example` to
+`examples/.env`, fill in your own test-wallet values, then load them and run:
+
+```bash
+set -a
+source examples/.env
+set +a
+python examples/22.solana_place_query_cancel_order.py
+# or
+python examples/23.eth_place_query_cancel_order.py
+```
+
+The local `examples/.env` is ignored by Git. Never put a private key in a
+tracked source file.
+
 ### Run Examples
 
 ```bash
