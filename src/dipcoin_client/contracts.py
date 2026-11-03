@@ -80,14 +80,23 @@ class Contracts:
             return "SUI_STAGING"
 
     def set_contract_addresses(self, contracts_info):
-        c_dict = {}
-        for c in contracts_info.get("data", contracts_info):
-            c_dict[c["symbol"]] = c
+        c_dict = self._market_info_by_symbol(contracts_info)
 
         # print("c dict",c_dict)
 
         self.contract_info = c_dict
         # Keep contracts_global_info, don't clear it
+
+    def update_market_info(self, market_info):
+        """Merge exchange-info records without dropping other cached markets."""
+        self.contract_info.update(self._market_info_by_symbol(market_info))
+
+    @staticmethod
+    def _market_info_by_symbol(market_info):
+        records = market_info.get("data", market_info) if isinstance(market_info, dict) else market_info
+        if isinstance(records, dict):
+            records = [records] if "symbol" in records else records.values()
+        return {record["symbol"]: record for record in records if isinstance(record, dict) and "symbol" in record}
 
     def get_sub_account_id(self):
         return self.contracts_global_info["sub_account_id"]
@@ -124,3 +133,13 @@ class Contracts:
         if symbol not in self.contract_info:
             raise KeyError(f"market {symbol} not found; call init() or get_exchange_info() first")
         return self.contract_info[symbol]["perpId"]
+
+    def get_market_epoch(self, market: MARKET_SYMBOLS) -> int:
+        symbol = symbol_value(market)
+        if symbol not in self.contract_info:
+            raise KeyError(f"market {symbol} not found; call init() or get_exchange_info() first")
+        market_info = self.contract_info[symbol]
+        for key in ("marketEpoch", "market_epoch", "epoch"):
+            if key in market_info and market_info[key] is not None:
+                return int(market_info[key])
+        return 0

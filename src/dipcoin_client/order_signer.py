@@ -45,11 +45,13 @@ class OrderSigner(Signer):
         # Matches the Java reference implementation formatting.
         sb = []
         sb.append("{\n")
-        if payload_version == 2:
+        if payload_version in (2, 3):
             sb.append("\"action\":\"" + "PlaceOrder" + "\",\n")
         sb.append("\"market\":\"" + str(order.get("market", "")) + "\",\n")
+        if payload_version == 3:
+            sb.append("\"marketEpoch\":\"" + str(order.get("marketEpoch", 0)) + "\",\n")
         creator = str(order.get("creator", ""))
-        if payload_version == 2:
+        if payload_version in (2, 3):
             creator = display_address(wallet_chain_id, creator)
         sb.append("\"creator\":\"" + creator + "\",\n")
         sb.append("\"isLong\":\"" + str(order.get("isLong", False)).lower() + "\",\n")

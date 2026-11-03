@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import aiohttp
 
-from .enumerations import ADJUST_MARGIN, MARKET_SYMBOLS
+from .enumerations import MARKET_SYMBOLS
 from sui_utils import Signer, fromSuiBase, fromUsdcBase, getSalt, getsha256Hash, toUsdcBase
 
 
@@ -293,15 +293,6 @@ class SuiGraphQLClient:
 
     async def withdraw_all_margin_from_bank(self):
         self._raise_ptb_not_implemented("withdraw_all_margin_from_bank")
-
-    async def adjust_margin(
-            self,
-            symbol: MARKET_SYMBOLS,
-            operation: ADJUST_MARGIN,
-            amount: str,
-            parentAddress: str = "",
-    ):
-        self._raise_ptb_not_implemented("adjust_margin")
 
     async def update_sub_account(self, sub_account_address: str, status: bool) -> bool:
         self._raise_ptb_not_implemented("update_sub_account")

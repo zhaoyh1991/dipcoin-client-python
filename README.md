@@ -2,11 +2,14 @@
 
 A simple Python client library for interacting with the Dipcoin perp protocol, including its off-chain API gateway and on-chain contracts.
 
-## What's New in 1.2.0
+## What's New in 1.3.0
 
-- Added Solana wallet support for onboarding plus v2 order/cancel signing.
-- Added preparatory ETH wallet signing support in the client for future Dipcoin enablement.
-- Kept Sui compatibility on the legacy v1 signing flow.
+- Added Solana wallet support for onboarding plus v3 order and plan-order signing.
+- Added Ethereum, Arbitrum, Optimism, Base, and Polygon wallet support with
+  protocol-chain-aware authorization and v3 signing.
+- Sui wallets remain supported; order and plan-order signing now defaults to v3.
+- Added relayer-based margin adjustment for Sui, Solana, and EVM wallets.
+- Added a fixed-point helper for estimating maximum removable margin.
 - Humanized known 10^18-scaled numeric fields in both REST responses and websocket market/user payloads.
 - Switched direct Sui chain helpers to a lightweight GraphQL client without Rust-native dependencies.
 
@@ -30,7 +33,7 @@ venv\Scripts\activate  # Windows
 
 ```bash
 pip install --upgrade pip
-pip install dipcoin_client_sui
+pip install dipcoin-client
 ```
 
 For local development from this repository:
@@ -98,16 +101,75 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-### ETH and Solana wallets
-
-Use `wallet_type="solana"` to onboard and sign v2 order/cancel payloads today. `wallet_type="eth"` is implemented in the client as a preparatory integration, but Dipcoin does not currently support ETH wallets in production yet. Sui remains on the legacy v1 signature format for backward compatibility.
+By default, the client decodes the JWT `exp` claim before authenticated REST requests and re-onboards automatically when the token will expire within 10 minutes. It does not retry failed requests after a `401`, so long-running programs should still handle expired-token or authorization errors returned by the API.
 
 ```python
-client = DipcoinClient(True, Networks["SUI_PROD"], "0x...eth_private_key", wallet_type="eth")
+client = DipcoinClient(
+    True,
+    Networks["SUI_STAGING"],
+    "your_mnemonic_or_private_key",
+    auto_reauth=True,  # default
+    token_refresh_margin_seconds=600,  # default: 10 minutes
+)
+```
+
+### EVM and Solana wallets
+
+EVM wallets use the same EIP-191 `personal_sign` implementation and signature
+scheme (`4`) on every supported EVM chain. The protocol chain identity is
+separate from the signature scheme:
+
+| `wallet_type` | Dipcoin protocol chain ID | Signed creator prefix |
+| --- | ---: | --- |
+| `eth` / `ethereum` / `evm` | 1 | `Ethereum:` |
+| `arbitrum` | 3 | `Arbitrum:` |
+| `optimism` | 4 | `Optimism:` |
+| `base` | 5 | `Base:` |
+| `polygon` | 6 | `Polygon:` |
+
+These are Dipcoin protocol chain IDs, not EIP-155/RPC chain IDs. For example,
+use `3` for Arbitrum rather than `42161`, and `5` for Base rather than `8453`.
+The client sends the selected protocol chain ID to `/api/authorize`; the gateway
+stores it in the JWT and injects `X-Wallet-Chain-Id` into downstream requests.
+
+```python
+client = DipcoinClient(
+    True,
+    Networks["SUI_STAGING"],
+    "0x...evm_private_key",
+    wallet_type="arbitrum",
+)
 await client.init(True)
 ```
 
+For configuration-driven integrations, keep `wallet_type="eth"` and pass the
+protocol chain separately:
+
+```python
+from dipcoin_client import ARBITRUM_CHAIN_ID
+
+client = DipcoinClient(
+    True,
+    Networks["SUI_STAGING"],
+    "0x...evm_private_key",
+    wallet_type="eth",
+    protocol_chain_id=ARBITRUM_CHAIN_ID,
+)
+```
+
+Use `wallet_type="solana"` for Solana onboarding and v3 order, cancel, and
+plan-order signatures.
+
 Solana accepts a 32-byte seed or 64-byte keypair encoded as hex, base64, base58, or a JSON byte array.
+
+Order and plan-order signatures default to `payloadVersion=3`. The client reads `marketEpoch` from exchange info during `init()` and falls back to `0` only when the market does not expose it yet. In a long-running process, refresh the market cache before signing when its 60-second TTL has elapsed:
+
+```python
+await client.refresh_market_info_if_stale()
+signed_order = client.create_signed_order(order_request)
+```
+
+The refresh interval can be changed with `market_info_cache_ttl_seconds` when creating `DipcoinClient`. `get_exchange_info()` also updates the signing cache with the data it fetches. Pass `payloadVersion` or `marketEpoch` only when you need to override those defaults for a specific request.
 
 ### Wallet credentials (mnemonic or private key)
 
@@ -159,7 +221,29 @@ GraphQL execution is available through `SuiGraphQLClient.execute_transaction(tra
 
 If local Sui PTB construction becomes important, evaluate community tooling such as `pysui` or the Java reference implementation in `sui4j` as a separate package instead of adding native dependencies to this client.
 
-For new add/remove margin integrations, prefer `DipcoinClient.create_margin_relay_signature(...)` and submit the signed payload through backend relayer APIs once available.
+Add/remove margin uses the Dipcoin relayer for Sui, Solana, and all supported EVM chains:
+
+```python
+await client.add_margin(MARKET_SYMBOLS.ETH, "1")
+await client.remove_margin(MARKET_SYMBOLS.ETH, "0.5")
+```
+
+Before removing margin, the SDK can estimate the maximum from a humanized
+position snapshot. The helper uses `fundingDue` and mirrors the protocol's
+10^18 fixed-point arithmetic:
+
+```python
+from dipcoin_client import calculate_max_removable_margin
+
+response = await client.get_user_position({"symbol": MARKET_SYMBOLS.ETH})
+position = response["data"][0]
+maximum = calculate_max_removable_margin(position)
+conservative = calculate_max_removable_margin(position, safety_factor="0.98")
+```
+
+The value is only an estimate: oracle price and unsettled funding may change
+before the relayer executes the removal. The optional `0.98` factor matches the
+current backend safety buffer.
 
 ### API numeric scaling (10¹⁸)
 
@@ -168,18 +252,6 @@ Read endpoints such as order book, ticker, exchange info, orders, positions, tra
 Websocket payloads for ticker, order book, recent trades, and known user / market update topics are also normalized before your listener callback receives them, so websocket handling stays consistent with REST reads.
 
 Order placement and signatures still accept human-readable inputs and convert request fields to base-18 integers before submitting.
-
-### Publishing to PyPI
-
-```bash
-python -m pip install --upgrade build twine
-rm -rf build dist
-python -m build
-python -m twine check dist/*
-python -m twine upload dist/*
-```
-
-For TestPyPI, use `python -m twine upload --repository testpypi dist/*`. Ensure `pyproject.toml` has the intended version before building.
 
 ### Update: take profit & stop loss (plan orders)
 
@@ -265,10 +337,10 @@ pip install --no-cache-dir --force-reinstall coincurve==17.0.0
 pip install -e .
 
 # Uninstall project
-pip uninstall dipcoin_client_sui
+pip uninstall dipcoin-client
 
 # Check installed package
-pip show dipcoin_client_sui
+pip show dipcoin-client
 
 # Upgrade pip
 pip install --upgrade pip
