@@ -9,7 +9,7 @@ Networks = {
     "SUI_PROD": {
         "url": "https://fullnode.mainnet.sui.io:443",
         "graphqlUrl": "https://graphql.mainnet.sui.io/graphql",
-        "apiGateway": "https://gray-api.dipcoin.io",
+        "apiGateway": "https://api.diptrade.com",
         "webSocketURL": "wss://ws.diptrade.com/stream/ws",
         "onboardingUrl": "dipcoin.io"
     },

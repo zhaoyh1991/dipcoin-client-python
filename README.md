@@ -36,6 +36,52 @@ pip install --upgrade pip
 pip install dipcoin-client
 ```
 
+After installation, import the client from your own Python script:
+
+For routine API use, create an API wallet from the API management page in the
+official Dipcoin website, then use its private key for signing and pass your
+main wallet address as `parentAddress`. Avoid using your main wallet's private
+key directly; the SDK supports it, but it gives the client broader authority.
+
+```python
+import asyncio
+from dipcoin_client import DipcoinClient, Networks
+
+
+async def main():
+    client = DipcoinClient(
+        True,
+        Networks["SUI_STAGING"],
+        "your_api_wallet_private_key",
+        parentAddress="0x...your_main_wallet_address...",
+    )
+    try:
+        await client.init(True)
+        print("Wallet address:", client.get_public_address())
+        print(await client.get_user_account_data())
+    finally:
+        await client.close_connections()
+
+
+asyncio.run(main())
+```
+
+The PyPI package installs the client library, not the repository's `examples/` directory. To run a ready-made example, get the source repository and install the PyPI package in that environment:
+
+```bash
+git clone https://github.com/dipcoinlab/diptrade-perp-client-python.git
+cd diptrade-perp-client-python
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install dipcoin-client
+cp examples/.env.example examples/.env
+# Edit examples/.env with your own test-wallet values, then:
+source examples/.env && python examples/22.solana_place_query_cancel_order.py
+```
+
+The Solana order example submits and cancels a real test-environment order. Use test credentials and verify the selected network before running it. Other examples are in `examples/`; some require additional credentials or may submit orders.
+
 For local development from this repository:
 
 ```bash
@@ -69,11 +115,15 @@ To enable proper code navigation and autocomplete in PyCharm:
 Edit `examples/config.py` to set your test credentials:
 
 ```python
-TEST_ACCT_KEY = "your_mnemonic_phrase"  # or hex private key, suiprivkey bech32, etc.
+TEST_ACCT_KEY = "your_api_wallet_private_key"
 TEST_NETWORK = "SUI_STAGING"  # mainnet: use "SUI_PROD"
 ```
 
-**⚠️ Security Warning**: The `TEST_ACCT_KEY` in `examples/config.py` is a secret (mnemonic or private key). Keep it secure and never commit it to version control.
+Generate an API wallet in the official Dipcoin website's API management page.
+Use that API wallet's private key as `TEST_ACCT_KEY` and configure the parent
+wallet address where the example supports `parentAddress`. Do not use the main
+wallet's private key for routine API access. Treat API wallet private keys as
+secrets and never commit them to version control.
 
 Examples `21.solana_user_data.py`, `22.solana_place_query_cancel_order.py` and
 `23.eth_place_query_cancel_order.py` read the parent/API addresses and API
@@ -81,12 +131,9 @@ private key from environment variables. Copy `examples/.env.example` to
 `examples/.env`, fill in your own test-wallet values, then load them and run:
 
 ```bash
-set -a
-source examples/.env
-set +a
-python examples/22.solana_place_query_cancel_order.py
+source examples/.env && python examples/22.solana_place_query_cancel_order.py
 # or
-python examples/23.eth_place_query_cancel_order.py
+source examples/.env && python examples/23.eth_place_query_cancel_order.py
 ```
 
 The local `examples/.env` is ignored by Git. Never put a private key in a
@@ -109,10 +156,15 @@ async def main():
     client = DipcoinClient(
         True,  # Agree to terms and conditions
         Networks["SUI_STAGING"],
-        "your_mnemonic_phrase"
+        "your_api_wallet_private_key",
+        parentAddress="0x...your_main_wallet_address...",
     )
-    await client.init(True)
-    print("Account Address:", client.get_public_address())
+    try:
+        await client.init(True)
+        print("API wallet address:", client.get_public_address())
+        print(await client.get_user_account_data())
+    finally:
+        await client.close_connections()
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -124,7 +176,8 @@ By default, the client decodes the JWT `exp` claim before authenticated REST req
 client = DipcoinClient(
     True,
     Networks["SUI_STAGING"],
-    "your_mnemonic_or_private_key",
+    "your_api_wallet_private_key",
+    parentAddress="0x...your_main_wallet_address...",
     auto_reauth=True,  # default
     token_refresh_margin_seconds=600,  # default: 10 minutes
 )
@@ -153,8 +206,9 @@ stores it in the JWT and injects `X-Wallet-Chain-Id` into downstream requests.
 client = DipcoinClient(
     True,
     Networks["SUI_STAGING"],
-    "0x...evm_private_key",
+    "0x...api_wallet_private_key",
     wallet_type="arbitrum",
+    parentAddress="0x...your_main_wallet_address...",
 )
 await client.init(True)
 ```
@@ -168,9 +222,10 @@ from dipcoin_client import ARBITRUM_CHAIN_ID
 client = DipcoinClient(
     True,
     Networks["SUI_STAGING"],
-    "0x...evm_private_key",
+    "0x...api_wallet_private_key",
     wallet_type="eth",
     protocol_chain_id=ARBITRUM_CHAIN_ID,
+    parentAddress="0x...your_main_wallet_address...",
 )
 ```
 
@@ -190,7 +245,10 @@ The refresh interval can be changed with `market_info_cache_ttl_seconds` when cr
 
 ### Wallet credentials (mnemonic or private key)
 
-`DipcoinClient` accepts either:
+For API usage, prefer an API wallet created from the API management page in the
+official Dipcoin website. Pass that wallet's private key to the client and the
+main wallet address as `parentAddress`. `DipcoinClient` also accepts these
+credential formats when direct wallet signing is intentionally needed:
 
 - **BIP39 mnemonic** — space-separated phrase (typically 12 or 24 words). The client detects a mnemonic heuristically (word count and alphabetic words).
 - **Sui private key export** — any of:
@@ -206,7 +264,7 @@ Some setups use a **sub-account** key that only has trading/API permissions, whi
 
 - When you authenticate with the **sub-account** key, pass the **main wallet address** as `parentAddress` in `DipcoinClient(...)`.
 - For Solana, both the sub-account and `parentAddress` are Solana addresses. The JWT is issued for the signing sub-account, while query/body `parentAddress` remains the raw parent Solana address.
-- When you use the **main wallet** mnemonic or private key directly, you normally **do not** need `parentAddress`; the client defaults it from your own address.
+- When you use the **main wallet** mnemonic or private key directly, you normally **do not** need `parentAddress`; the client defaults it from your own address. This is supported for compatibility, but API-wallet signing is recommended for routine use.
 
 Example (sub-account key + main wallet as parent), see `examples/test_sui_taker_pingpong.py`:
 
@@ -221,20 +279,9 @@ client = DipcoinClient(
 
 For **mainnet**, pass `Networks["SUI_PROD"]` as the second argument instead of `SUI_STAGING` (see `src/dipcoin_client/constants.py`).
 
-### Sui GraphQL helpers
+### Direct Sui chain access
 
-Direct Sui chain methods are no longer exposed on `DipcoinClient`. Use `SuiGraphQLClient` for lightweight direct Sui reads and GraphQL transaction submission without native dependencies.
-
-```python
-from dipcoin_client import DipcoinClient, Networks, SuiGraphQLClient
-
-client = DipcoinClient(True, Networks["SUI_PROD"], PRIVATE_KEY)
-await client.init(True)
-sui_chain = SuiGraphQLClient(client)
-balance = await sui_chain.get_native_chain_token_balance()
-```
-
-GraphQL execution is available through `SuiGraphQLClient.execute_transaction(transaction_data_bcs, signatures)`. Local PTB construction is not bundled because direct Sui writes are not a core SDK requirement and most product flows should go through Dipcoin relayers.
+Direct Sui chain access is not part of the core client workflow, and the examples focus on Dipcoin API/relayer operations. The optional `SuiGraphQLClient` module remains available for users who specifically need low-level Sui GraphQL reads or transaction submission; it does not provide PTB construction. For routine product operations, use Dipcoin relayer methods instead.
 
 If local Sui PTB construction becomes important, evaluate community tooling such as `pysui` or the Java reference implementation in `sui4j` as a separate package instead of adding native dependencies to this client.
 
@@ -297,7 +344,7 @@ If you run into integration issues, **LLM / AI coding assistants** work well wit
 ## Project Structure
 
 ```
-dipcoin-client-python/
+diptrade-perp-client-python/
 ├── src/
 │   ├── dipcoin_client/      # Main client package
 │   └── sui_utils/            # SUI blockchain utilities
